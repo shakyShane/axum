@@ -7,19 +7,24 @@
 //! cargo run -p example-reverse-proxy
 //! ```
 
+use axum::body::Bytes;
 use axum::extract::FromRef;
 use axum::http::HeaderValue;
+use axum::middleware::Next;
 use axum::routing::head;
 use axum::{
     body::Body,
     extract::{Request, State},
     http::uri::Uri,
+    middleware,
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
+use http_body_util::BodyExt;
 use hyper::StatusCode;
 use hyper_util::{client::legacy::connect::HttpConnector, rt::TokioExecutor};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 type Client = hyper_util::client::legacy::Client<HttpConnector, Body>;
 
@@ -49,6 +54,14 @@ impl FromRef<AppState> for Client {
 async fn main() {
     // tokio::spawn(server());
 
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "example_reverse_proxy=debug,tower_http=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
     let client: Client =
         hyper_util::client::legacy::Client::<(), ()>::builder(TokioExecutor::new())
             .build(HttpConnector::new());
@@ -60,8 +73,8 @@ async fn main() {
     let app_state = AppState { config, client };
 
     let app = Router::new()
-        .route("/", get(handler))
-        .route("/", head(handler))
+        .route("/", get(handler).head(handler))
+        .layer(middleware::from_fn(print_request_response))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:5000")
@@ -105,4 +118,43 @@ async fn handler(
         .await
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .into_response())
+}
+
+async fn print_request_response(
+    req: Request,
+    next: Next,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let (parts, body) = req.into_parts();
+    let bytes = buffer_and_print("request", body).await?;
+    let req = Request::from_parts(parts, Body::from(bytes));
+
+    let res = next.run(req).await;
+
+    let (parts, body) = res.into_parts();
+    let bytes = buffer_and_print("response", body).await?;
+    let res = Response::from_parts(parts, Body::from(bytes));
+
+    Ok(res)
+}
+
+async fn buffer_and_print<B>(direction: &str, body: B) -> Result<Bytes, (StatusCode, String)>
+where
+    B: axum::body::HttpBody<Data = Bytes>,
+    B::Error: std::fmt::Display,
+{
+    let bytes = match body.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(err) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("failed to read {direction} body: {err}"),
+            ));
+        }
+    };
+
+    if let Ok(body) = std::str::from_utf8(&bytes) {
+        tracing::debug!("{direction} body = {body:?}");
+    }
+
+    Ok(bytes)
 }
