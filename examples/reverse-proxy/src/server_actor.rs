@@ -1,16 +1,21 @@
 use crate::server_config::ServerConfig;
 use crate::server_signals::ServerSignals;
+use crate::server_updates::Patch;
 use actix::{ActorContext, AsyncContext, Running};
 use actix_rt::Arbiter;
+use axum::extract::State;
+use axum::http::StatusCode;
 use axum::routing::get;
 use axum::Router;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender};
 
 pub struct ServerActor {
     pub config: ServerConfig,
     pub signals: Option<ServerSignals>,
+    pub html: Arc<Mutex<String>>,
 }
 
 impl ServerActor {
@@ -18,6 +23,7 @@ impl ServerActor {
         Self {
             config,
             signals: None,
+            html: Arc::new(Mutex::new(String::from("hello world"))),
         }
     }
     pub fn install_signals(&mut self) -> (Sender<()>, Receiver<()>) {
@@ -40,9 +46,10 @@ impl actix::Actor for ServerActor {
     fn started(&mut self, ctx: &mut Self::Context) {
         let addr = self.config.bind_address.clone();
         let (send_complete, received_stop) = self.install_signals();
+        let h = self.html.clone();
 
         let server = async {
-            let app = Router::new().route("/", get(|| async { "foo" }));
+            let app = Router::new().route("/", get(get_dyn)).with_state(h);
             let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
             tracing::debug!("axum: listening on {}", listener.local_addr().unwrap());
             match axum::serve(listener, app)
@@ -74,6 +81,11 @@ impl actix::Actor for ServerActor {
     }
 }
 
+async fn get_dyn(State(arc): State<Arc<Mutex<String>>>) -> Result<String, (StatusCode, String)> {
+    let v = arc.lock().unwrap();
+    Ok(v.to_string().clone())
+}
+
 #[derive(actix::Message)]
 #[rtype(result = "()")]
 pub struct Stop2;
@@ -103,5 +115,13 @@ impl actix::Handler<Stop2> for ServerActor {
         } else {
             todo!("cannot get here?")
         }
+    }
+}
+
+impl actix::Handler<Patch> for ServerActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: Patch, ctx: &mut Self::Context) -> Self::Result {
+        *self.html.lock().unwrap() = String::from(msg.html)
     }
 }

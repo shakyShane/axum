@@ -1,6 +1,7 @@
 mod server_actor;
 mod server_config;
 mod server_signals;
+mod server_updates;
 mod servers;
 
 use crate::server_config::ServerConfig;
@@ -23,7 +24,8 @@ use http_body_util::BodyExt;
 use hyper::StatusCode;
 use hyper_util::{client::legacy::connect::HttpConnector, rt::TokioExecutor};
 use std::time::Duration;
-use tokio::time::sleep;
+use tokio::time;
+use tokio::time::{interval, sleep};
 use tracing::instrument::WithSubscriber;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -86,7 +88,7 @@ fn main() {
             ],
         });
 
-        sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_secs(10000)).await;
 
         match addr.send(Servers::STOP_MSG).await {
             Ok(_) => tracing::debug!("all stopped"),
