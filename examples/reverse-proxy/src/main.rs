@@ -1,29 +1,26 @@
-//! Reverse proxy listening in "localhost:4000" will proxy all requests to "localhost:3000"
-//! endpoint.
-//!
-//! Run with
-//!
-//! ```not_rust
-//! cargo run -p example-reverse-proxy
-//! ```
+mod server_actor;
+mod server_config;
+mod server_signals;
 
+use actix::dev::MessageResponse;
+use actix::prelude::*;
 use axum::body::Bytes;
 use axum::extract::FromRef;
 use axum::http::HeaderValue;
 use axum::middleware::Next;
-use axum::routing::head;
 use axum::{
     body::Body,
     extract::{Request, State},
+    handler::HandlerWithoutStateExt,
     http::uri::Uri,
-    middleware,
     response::{IntoResponse, Response},
-    routing::get,
-    Router,
 };
 use http_body_util::BodyExt;
 use hyper::StatusCode;
 use hyper_util::{client::legacy::connect::HttpConnector, rt::TokioExecutor};
+use std::time::Duration;
+use tokio::time::sleep;
+use tracing::instrument::WithSubscriber;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 type Client = hyper_util::client::legacy::Client<HttpConnector, Body>;
@@ -50,38 +47,119 @@ impl FromRef<AppState> for Client {
     }
 }
 
-#[tokio::main]
-async fn main() {
-    // tokio::spawn(server());
+#[derive(actix::Message)]
+#[rtype(result = "usize")]
+struct Ping(usize);
 
+#[derive(Debug)]
+struct ServerHandler {
+    actor_address: actix::Addr<server_actor::ServerActor>,
+}
+fn main() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "example_reverse_proxy=debug,tower_http=debug".into()),
+                .unwrap_or_else(|_| "example_reverse_proxy=trace,tower_http=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let client: Client =
-        hyper_util::client::legacy::Client::<(), ()>::builder(TokioExecutor::new())
-            .build(HttpConnector::new());
+    let system = System::new();
 
-    let config = Config {
-        host: "example.com".into(),
-    };
+    system.block_on(async {
+        let servers = ["127.0.0.1:3000", "127.0.0.1:4000"];
+        tracing::trace!("creating server actors {:#?}", servers);
+        let server_handlers = servers
+            .into_iter()
+            .map(|bind_address| {
+                let server = server_actor::ServerActor::new_from_port(bind_address);
+                let actor_addr = server.start();
+                let server_address = ServerHandler {
+                    actor_address: actor_addr,
+                };
+                server_address
+            })
+            .collect::<Vec<ServerHandler>>();
 
-    let app_state = AppState { config, client };
+        tracing::trace!("waiting... now...");
+        sleep(Duration::from_secs(1000)).await;
 
-    let app = Router::new()
-        .route("/", get(handler).head(handler))
-        .layer(middleware::from_fn(print_request_response))
-        .with_state(app_state);
+        // for ref server_handler in server_handlers {
+        //     match server_handler.actor_address.send(server::Stop2).await {
+        //         Ok(v) => {
+        //             tracing::trace!("wait over");
+        //         }
+        //         Err(_) => {}
+        //     }
+        // }
+        // sleep(Duration::from_secs(10)).await;
+        // println!("restarting...");
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:5000")
-        .await
-        .unwrap();
-    println!("listening on {}", listener.local_addr().unwrap());
-    axum::serve(listener, app).await.unwrap();
+        // let server_handlers = servers
+        //     .into_iter()
+        //     .map(|bind_address| {
+        //         let server = server::Server {
+        //             config: ServerConfig {
+        //                 bind_address: bind_address.to_string(),
+        //             },
+        //         };
+        //         let actor_addr = server.start();
+        //         let server_address = ServerHandler {
+        //             actor_address: actor_addr,
+        //         };
+        //         server_address
+        //     })
+        //     .collect::<Vec<ServerHandler>>();
+
+        // sleep(Duration::from_secs(200)).await;
+        //
+        // println!("all done...");
+
+        // dbg!(&server_handlers);
+        // let addr = MyActor { count: 10 }.start();
+        //
+        // // send message and get future for result
+        // let res = addr.send(Ping(10)).await;
+        //
+        // // handle() returns tokio handle
+        // println!("RESULT: {}", res.unwrap() == 20);
+        //
+        // tracing_subscriber::registry()
+        //     .with(
+        //         tracing_subscriber::EnvFilter::try_from_default_env()
+        //             .unwrap_or_else(|_| "example_reverse_proxy=debug,tower_http=debug".into()),
+        //     )
+        //     .with(tracing_subscriber::fmt::layer())
+        //     .init();
+        //
+        // let client: Client =
+        //     hyper_util::client::legacy::Client::<(), ()>::builder(TokioExecutor::new())
+        //         .build(HttpConnector::new());
+        //
+        // let config = Config {
+        //     host: "example.com".into(),
+        // };
+        //
+        // let app_state = AppState { config, client };
+        //
+        // let app = Router::new()
+        //     .route("/", get(handler).head(handler))
+        //     .layer(middleware::from_fn(print_request_response))
+        //     .with_state(app_state);
+        //
+        // let listener = tokio::net::TcpListener::bind("127.0.0.1:5000")
+        //     .await
+        //     .unwrap();
+        //
+        // println!("listening on {}", listener.local_addr().unwrap());
+        //
+        // let n = addr.send(Stop2).await;
+        //
+        // axum::serve(listener, app).await.unwrap()
+    });
+
+    // stop system and exit
+    System::current().stop();
 }
 
 async fn handler(
