@@ -14,11 +14,9 @@ pub struct ServerActor {
 }
 
 impl ServerActor {
-    pub fn new_from_port(port: &str) -> Self {
+    pub fn new_from_config(config: ServerConfig) -> Self {
         Self {
-            config: ServerConfig {
-                bind_address: port.to_string(),
-            },
+            config,
             signals: None,
         }
     }
@@ -35,38 +33,6 @@ impl ServerActor {
     }
     pub async fn stop_server(&mut self) {}
 }
-
-impl actix::Handler<Stop2> for ServerActor {
-    type Result = Pin<Box<dyn Future<Output = ()>>>;
-
-    fn handle(&mut self, msg: Stop2, ctx: &mut Self::Context) -> Self::Result {
-        tracing::trace!("actor(Server): Stop2");
-        let Some(signals) = self.signals.take() else {
-            todo!("how can we get here?")
-        };
-        if let Some(stop_msg_sender) = signals.stop_msg_sender {
-            tracing::trace!("actor(Server): state when trying to stop {:?}", ctx.state());
-            match stop_msg_sender.send(()) {
-                Ok(_) => tracing::trace!("actor(Server): sending signal to shutdown"),
-                Err(_) => tracing::error!("actor(Server): could not send signal"),
-            }
-        } else {
-            tracing::error!("actor(Server): could not take sender");
-            todo!("cannot get here?")
-        }
-        if let Some(complete_msg_receiver) = signals.complete_mdg_receiver {
-            Box::pin(async {
-                complete_msg_receiver.await.unwrap();
-            })
-        } else {
-            todo!("cannot get here?")
-        }
-    }
-}
-
-#[derive(actix::Message)]
-#[rtype(result = "()")]
-pub struct Stop2;
 
 impl actix::Actor for ServerActor {
     type Context = actix::Context<Self>;
@@ -105,5 +71,37 @@ impl actix::Actor for ServerActor {
 
     fn stopped(&mut self, ctx: &mut Self::Context) {
         tracing::debug!("Server stopped (), {}", &self.config.bind_address);
+    }
+}
+
+#[derive(actix::Message)]
+#[rtype(result = "()")]
+pub struct Stop2;
+
+impl actix::Handler<Stop2> for ServerActor {
+    type Result = Pin<Box<dyn Future<Output = ()>>>;
+
+    fn handle(&mut self, msg: Stop2, ctx: &mut Self::Context) -> Self::Result {
+        tracing::trace!("actor(Server): Stop2");
+        let Some(signals) = self.signals.take() else {
+            todo!("how can we get here?")
+        };
+        if let Some(stop_msg_sender) = signals.stop_msg_sender {
+            tracing::trace!("actor(Server): state when trying to stop {:?}", ctx.state());
+            match stop_msg_sender.send(()) {
+                Ok(_) => tracing::trace!("actor(Server): sending signal to shutdown"),
+                Err(_) => tracing::error!("actor(Server): could not send signal"),
+            }
+        } else {
+            tracing::error!("actor(Server): could not take sender");
+            todo!("cannot get here?")
+        }
+        if let Some(complete_msg_receiver) = signals.complete_mdg_receiver {
+            Box::pin(async {
+                complete_msg_receiver.await.unwrap();
+            })
+        } else {
+            todo!("cannot get here?")
+        }
     }
 }

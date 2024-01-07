@@ -1,9 +1,13 @@
 mod server_actor;
 mod server_config;
 mod server_signals;
+mod servers;
 
+use crate::server_config::ServerConfig;
+use crate::servers::{Servers, StartMessage};
 use actix::dev::MessageResponse;
 use actix::prelude::*;
+use actix::Running::Stop;
 use axum::body::Bytes;
 use axum::extract::FromRef;
 use axum::http::HeaderValue;
@@ -51,7 +55,7 @@ impl FromRef<AppState> for Client {
 #[rtype(result = "usize")]
 struct Ping(usize);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ServerHandler {
     actor_address: actix::Addr<server_actor::ServerActor>,
 }
@@ -67,22 +71,27 @@ fn main() {
     let system = System::new();
 
     system.block_on(async {
-        let servers = ["127.0.0.1:3000", "127.0.0.1:4000"];
-        tracing::trace!("creating server actors {:#?}", servers);
-        let server_handlers = servers
-            .into_iter()
-            .map(|bind_address| {
-                let server = server_actor::ServerActor::new_from_port(bind_address);
-                let actor_addr = server.start();
-                let server_address = ServerHandler {
-                    actor_address: actor_addr,
-                };
-                server_address
-            })
-            .collect::<Vec<ServerHandler>>();
+        let servers = Servers::new();
+        tracing::trace!("starting servers...");
+        let addr = servers.start();
 
-        tracing::trace!("waiting... now...");
-        sleep(Duration::from_secs(1000)).await;
+        addr.do_send(StartMessage {
+            server_configs: vec![
+                ServerConfig {
+                    bind_address: "127.0.0.1:3000".into(),
+                },
+                ServerConfig {
+                    bind_address: "127.0.0.1:4000".into(),
+                },
+            ],
+        });
+
+        sleep(Duration::from_secs(5)).await;
+
+        match addr.send(Servers::STOP_MSG).await {
+            Ok(_) => tracing::debug!("all stopped"),
+            Err(_) => tracing::debug!("error stopping all"),
+        }
 
         // for ref server_handler in server_handlers {
         //     match server_handler.actor_address.send(server::Stop2).await {
