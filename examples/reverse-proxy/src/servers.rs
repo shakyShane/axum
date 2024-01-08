@@ -1,3 +1,4 @@
+use crate::fs_watcher::FsWatchEvent;
 use crate::server_actor::Stop2;
 use crate::server_config::ServerConfig;
 use crate::server_updates::Patch;
@@ -5,6 +6,7 @@ use crate::{server_actor, ServerHandler};
 use actix::{Actor, Running};
 use actix_rt::Arbiter;
 use futures::future::join_all;
+use std::fs::read_to_string;
 use std::future::Future;
 use std::pin::Pin;
 use tokio::time;
@@ -53,20 +55,20 @@ impl actix::Handler<StartMessage> for Servers {
         self.handlers.extend(server_handlers);
         let clone = self.handlers.clone();
 
-        Arbiter::current().spawn(async move {
-            let mut interval = time::interval(time::Duration::from_secs(1));
-            let mut count = 0;
-            for _i in 0..200 {
-                interval.tick().await;
-                count += 1;
-                tracing::debug!("sending tick! {} to {}", count, clone.len());
-                for x in &clone {
-                    x.actor_address.do_send(Patch {
-                        html: format!("count: {count}"),
-                    })
-                }
-            }
-        });
+        // Arbiter::current().spawn(async move {
+        //     let mut interval = time::interval(time::Duration::from_secs(1));
+        //     let mut count = 0;
+        //     for _i in 0..200 {
+        //         interval.tick().await;
+        //         count += 1;
+        //         tracing::debug!("sending tick! {} to {}", count, clone.len());
+        //         for x in &clone {
+        //             x.actor_address.do_send(Patch {
+        //                 html: format!("count: {count}"),
+        //             })
+        //         }
+        //     }
+        // });
     }
 }
 
@@ -88,5 +90,21 @@ impl actix::Handler<StopMsg> for Servers {
                 .collect::<Vec<_>>();
             join_all(fts).await;
         })
+    }
+}
+
+impl actix::Handler<FsWatchEvent> for Servers {
+    type Result = ();
+
+    /// todo: accept more messages here
+    fn handle(&mut self, msg: FsWatchEvent, ctx: &mut Self::Context) -> Self::Result {
+        if let Ok(string) = read_to_string(msg.absolute_path) {
+            tracing::debug!("read {:?} bytes", string.len());
+            for server_handlers in &self.handlers {
+                server_handlers.actor_address.do_send(Patch {
+                    html: string.clone(),
+                })
+            }
+        }
     }
 }

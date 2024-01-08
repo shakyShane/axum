@@ -1,9 +1,11 @@
+mod fs_watcher;
 mod server_actor;
 mod server_config;
 mod server_signals;
 mod server_updates;
 mod servers;
 
+use crate::fs_watcher::FsWatcher;
 use crate::server_config::ServerConfig;
 use crate::servers::{Servers, StartMessage};
 use actix::dev::MessageResponse;
@@ -23,6 +25,7 @@ use axum::{
 use http_body_util::BodyExt;
 use hyper::StatusCode;
 use hyper_util::{client::legacy::connect::HttpConnector, rt::TokioExecutor};
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time;
 use tokio::time::{interval, sleep};
@@ -74,10 +77,20 @@ fn main() {
 
     system.block_on(async {
         let servers = Servers::new();
-        tracing::trace!("starting servers...");
-        let addr = servers.start();
+        let watcher = FsWatcher::new();
 
-        addr.do_send(StartMessage {
+
+        tracing::trace!("starting servers...");
+        let servers_addr = servers.start();
+
+        tracing::trace!("starting watcher for input.html");
+        let watcher_addr = watcher.start();
+        watcher_addr.do_send(crate::fs_watcher::WatchPath {
+            recipients: vec![servers_addr.clone().recipient()],
+            path: PathBuf::from("/Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/input.html"),
+        });
+
+        servers_addr.do_send(StartMessage {
             server_configs: vec![
                 ServerConfig {
                     bind_address: "127.0.0.1:3000".into(),
@@ -90,7 +103,7 @@ fn main() {
 
         sleep(Duration::from_secs(10000)).await;
 
-        match addr.send(Servers::STOP_MSG).await {
+        match servers_addr.send(Servers::STOP_MSG).await {
             Ok(_) => tracing::debug!("all stopped"),
             Err(_) => tracing::debug!("error stopping all"),
         }
