@@ -1,10 +1,11 @@
-use crate::server_config::ServerConfig;
+use crate::server_config::{Route, ServerConfig, ServerConfigRoute};
 use crate::server_signals::ServerSignals;
 use crate::server_updates::Patch;
 use actix::{ActorContext, AsyncContext, Running};
 use actix_rt::Arbiter;
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use std::future::Future;
@@ -15,7 +16,7 @@ use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender};
 pub struct ServerActor {
     pub config: ServerConfig,
     pub signals: Option<ServerSignals>,
-    pub html: Arc<Mutex<String>>,
+    pub app_state: Option<Arc<Mutex<AppState>>>,
 }
 
 impl ServerActor {
@@ -23,7 +24,7 @@ impl ServerActor {
         Self {
             config,
             signals: None,
-            html: Arc::new(Mutex::new(String::from("hello world"))),
+            app_state: None,
         }
     }
     pub fn install_signals(&mut self) -> (Sender<()>, Receiver<()>) {
@@ -40,17 +41,58 @@ impl ServerActor {
     pub async fn stop_server(&mut self) {}
 }
 
+struct AppState {
+    routes: Vec<ServerConfigRoute>,
+}
+
+#[derive(Clone)]
+struct Matched {
+    index: usize,
+    app_state: Arc<Mutex<AppState>>,
+}
+
+impl IntoResponse for Matched {
+    fn into_response(self) -> Response {
+        match self.app_state.lock().unwrap().routes.get(self.index) {
+            None => todo!("how?"),
+            Some(v) => match &v.route {
+                Route::Html(string) => string.clone().into_response(),
+            },
+        }
+    }
+}
+
 impl actix::Actor for ServerActor {
     type Context = actix::Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
         let addr = self.config.bind_address.clone();
         let (send_complete, received_stop) = self.install_signals();
-        let h = self.html.clone();
 
-        let server = async {
-            let app = Router::new().route("/", get(get_dyn)).with_state(h);
+        let app_state = Arc::new(Mutex::new(AppState {
+            routes: self.config.routes.clone(),
+        }));
+
+        self.app_state = Some(app_state.clone());
+
+        let config = self.config.clone();
+
+        let server = async move {
+            let mut app = Router::new()
+                .route("/_", get(|| async { "yay!" }))
+                .with_state(app_state.clone());
+
+            for (index, route) in config.routes.into_iter().enumerate() {
+                tracing::debug!("adding route for {:?}", route.path);
+                let matched = Matched {
+                    index,
+                    app_state: app_state.clone(),
+                };
+                app = app.merge(Router::new().route(route.path.to_str().unwrap(), get(matched)));
+            }
+
             let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+
             tracing::debug!("axum: listening on {}", listener.local_addr().unwrap());
             match axum::serve(listener, app)
                 .with_graceful_shutdown(async { received_stop.await.unwrap() })
@@ -81,9 +123,13 @@ impl actix::Actor for ServerActor {
     }
 }
 
-async fn get_dyn(State(arc): State<Arc<Mutex<String>>>) -> Result<String, (StatusCode, String)> {
-    let v = arc.lock().unwrap();
-    Ok(v.to_string().clone())
+async fn get_dyn(
+    State(app_state): State<Arc<Mutex<AppState>>>,
+    State(index): State<usize>,
+) -> Result<String, (StatusCode, String)> {
+    // let v = arc.lock().unwrap();
+    // for x in app_state.lock().unwrap().routes {}
+    Ok("Shane".into())
 }
 
 #[derive(actix::Message)]
@@ -122,6 +168,6 @@ impl actix::Handler<Patch> for ServerActor {
     type Result = ();
 
     fn handle(&mut self, msg: Patch, ctx: &mut Self::Context) -> Self::Result {
-        *self.html.lock().unwrap() = String::from(msg.html)
+        // *self.html.lock().unwrap() = String::from(msg.html)
     }
 }

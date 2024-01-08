@@ -6,7 +6,7 @@ mod server_updates;
 mod servers;
 
 use crate::fs_watcher::FsWatcher;
-use crate::server_config::ServerConfig;
+use crate::server_config::{Route, ServerConfig, ServerConfigRoute};
 use crate::servers::{Servers, StartMessage};
 use actix::dev::MessageResponse;
 use actix::prelude::*;
@@ -94,9 +94,21 @@ fn main() {
             server_configs: vec![
                 ServerConfig {
                     bind_address: "127.0.0.1:3000".into(),
+                    routes: vec![
+                        ServerConfigRoute {
+                            path: PathBuf::from("/"),
+                            route: Route::Html("hello world! from s1".into()),
+                        }
+                    ]
                 },
                 ServerConfig {
                     bind_address: "127.0.0.1:4000".into(),
+                    routes: vec![
+                        ServerConfigRoute {
+                            path: PathBuf::from("/"),
+                            route: Route::Html("hello world! from s2".into()),
+                        }
+                    ]
                 },
             ],
         });
