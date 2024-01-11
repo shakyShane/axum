@@ -13,22 +13,58 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use axum::{middleware, response::Html, routing::get, Extension, Router};
 use mime_guess::mime;
+use std::fmt::Formatter;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tower::{Service, ServiceExt};
 use tower_http::services::{ServeDir, ServeFile};
-
 #[derive(Clone)]
 struct AppState {
-    route: Arc<Mutex<Router>>,
-    // pub name: Arc<String>,
+    pub routes: Arc<Mutex<matchit::Router<Content>>>,
+}
+
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Route {
+    pub path: PathBuf,
+    pub content: Content,
+}
+
+#[derive(Clone, Debug)]
+enum Content {
+    Raw(RawContent),
+    Dir(String),
+}
+
+#[derive(Clone, Debug)]
+enum RawContent {
+    Html(String),
+    Css(String),
+    Js(String),
 }
 
 #[tokio::main]
 async fn main() {
     // build our application with a route
-    async fn mw(req: Request, next: Next) -> impl IntoResponse {
+    async fn raw_loader(
+        State(app): State<Arc<AppState>>,
+        req: Request,
+        next: Next,
+    ) -> impl IntoResponse {
         let uri = req.uri().clone();
         println!("1 before: {}", uri);
+
+        {
+            let mut locked = app.routes.lock().unwrap();
+            let m = locked.at("/home");
+            dbg!(m);
+        }
+
         if uri.to_string() == "/lol.css" {
             let guess = mime_guess::from_path(uri.path());
             let mime = guess
@@ -64,36 +100,29 @@ async fn main() {
         response
     }
 
-    let other = AppState {
-        route: Arc::new(Mutex::new(
-            Router::new().route("/s", get(another)).with_state::<()>(()),
-        )),
-    };
-    // let other = AppState {
-    //     name: Arc::new(String::from("lol!")),
-    // };
+    let mut router = matchit::Router::new();
+    router
+        .insert(
+            "/home",
+            crate::Content::Raw(RawContent::Html(String::from("haha!"))),
+        )
+        .unwrap();
 
-    async fn maybe_serve_dir(State(app): State<AppState>, req: Request) -> impl IntoResponse {
-        let uri = req.uri().clone();
-        println!("2 before: {}", uri);
-        let response = app
-            .route
-            .lock()
-            .unwrap()
-            .as_service()
-            .ready()
-            .await
-            .unwrap()
-            .call(req)
-            .await
-            .unwrap();
+    let other = Arc::new(AppState {
+        routes: Arc::new(Mutex::new(router)),
+    });
 
-        return response;
+    async fn maybe_serve_dir(req: Request, next: Next) -> impl IntoResponse {
+        let response = next.run(req).await;
+        return response.into_response();
     }
 
     let app = any(handler)
-        .with_state(other)
-        .layer(tower::ServiceBuilder::new().layer(middleware::from_fn(mw)));
+        .layer(
+            tower::ServiceBuilder::new()
+                .layer(middleware::from_fn_with_state(other.clone(), raw_loader)),
+        )
+        .with_state(other.clone());
     // let app = any(handler).layer(
     //     tower::ServiceBuilder::new()
     //         .layer(middleware::from_fn(mw))
@@ -110,8 +139,28 @@ async fn main() {
     axum::serve(listener, svc).await.unwrap();
 }
 
-async fn handler(State(app): State<AppState>, req: Request) -> Response {
-    // let mut lock = app.route.lock().unwrap();
+async fn handler(State(app): State<Arc<AppState>>, req: Request) -> Response {
+    // let a = app.name.lock().unwrap();
+    {
+        println!("locking a ting...");
+        let mut locked = app.routes.lock().unwrap();
+        let m = locked.at("/home");
+        dbg!(m);
+        let mut next = matchit::Router::new();
+        next.insert(
+            "/home",
+            crate::Content::Raw(RawContent::Css(String::from("some nice css"))),
+        )
+        .unwrap();
+        *locked = next;
+    };
+
+    {
+        let mut locked = app.routes.lock().unwrap();
+        let m = locked.at("/home");
+        dbg!(m);
+    }
+
     let mut router = Router::new();
 
     {
