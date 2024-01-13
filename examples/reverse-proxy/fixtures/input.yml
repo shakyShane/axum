@@ -1,0 +1,10 @@
+servers:
+  - bind_address: 127.0.0.1:5000
+    routes:
+      - path: /
+        content:
+          type: Raw
+          raw:
+            type: Html
+            html: |
+              <html>here..</html>

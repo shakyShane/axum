@@ -113,10 +113,16 @@ async fn get_dyn(State(app): State<Arc<AppState>>, uri: Uri, req: Request) -> Re
     }
 
     match content {
-        Content::Raw(RawContent::Html(html)) => Html(html.clone()).into_response(),
-        Content::Raw(RawContent::Css(_)) => todo!("not implemented yet"),
-        Content::Raw(RawContent::Js(_)) => todo!("not implemented yet"),
-        Content::Dir(_) => "{}".into_response(),
+        Content::Raw {
+            raw: RawContent::Html { html },
+        } => Html(html.clone()).into_response(),
+        Content::Raw {
+            raw: RawContent::Css { css },
+        } => todo!("not implemented yet"),
+        Content::Raw {
+            raw: RawContent::Js { .. },
+        } => todo!("not implemented yet"),
+        Content::Dir { .. } => "{}".into_response(),
     }
 }
 
@@ -157,18 +163,21 @@ impl actix::Handler<Patch> for ServerActor {
 
     fn handle(&mut self, msg: Patch, ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!("ServerActor received");
-        let path = "/";
         if let Some(app_state) = &self.app_state {
             let mut router = app_state.routes.lock().unwrap();
-            let existing = router.at_mut(path);
-            if let Ok(mut prev) = existing {
-                *prev.value = Content::Raw(RawContent::Html("updated".into()));
-                tracing::trace!("updated mutable route at {}", path)
-            } else if let Err(err) = existing {
-                match router.insert(path, Content::Raw(RawContent::Html("hello world!".into()))) {
-                    Ok(_) => tracing::trace!("inserted"),
-                    Err(_) => tracing::error!("could not insert {:?}", err.to_string()),
-                };
+
+            for route in msg.routes {
+                let path = route.path.to_str().unwrap();
+                let existing = router.at_mut(path);
+                if let Ok(mut prev) = existing {
+                    *prev.value = route.content;
+                    tracing::trace!("updated mutable route at {}", path)
+                } else if let Err(err) = existing {
+                    match router.insert(path, route.content) {
+                        Ok(_) => tracing::trace!("inserted"),
+                        Err(_) => tracing::error!("could not insert {:?}", err.to_string()),
+                    };
+                }
             }
         }
     }

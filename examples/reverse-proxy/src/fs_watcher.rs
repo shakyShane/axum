@@ -1,5 +1,5 @@
 use actix::{Actor, AsyncContext, Handler, Recipient};
-use notify::{RecursiveMode, Watcher};
+use notify::{ErrorKind, RecursiveMode, Watcher};
 use std::path::PathBuf;
 
 pub struct FsWatcher {
@@ -17,7 +17,7 @@ impl FsWatcher {
 }
 
 #[derive(actix::Message)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<(), FsWatchError>")]
 pub struct WatchPath {
     pub recipients: Vec<Recipient<FsWatchEvent>>,
     pub path: std::path::PathBuf,
@@ -63,8 +63,15 @@ impl Handler<FsWatchEvent> for FsWatcher {
         }
     }
 }
+
+#[derive(thiserror::Error, Debug)]
+pub enum FsWatchError {
+    #[error("Watcher error, original error: {0}")]
+    Watcher(#[from] notify::Error),
+}
+
 impl Handler<WatchPath> for FsWatcher {
-    type Result = ();
+    type Result = Result<(), FsWatchError>;
 
     fn handle(&mut self, msg: WatchPath, ctx: &mut Self::Context) -> Self::Result {
         if let Some(watcher) = self.watcher.as_mut() {
@@ -73,10 +80,12 @@ impl Handler<WatchPath> for FsWatcher {
                     self.receivers.extend(msg.recipients);
                     tracing::debug!("👀 watching! {:?}", msg.path)
                 }
-                Err(_) => {
-                    tracing::error!("cannot add")
+                Err(err) => {
+                    tracing::error!("cannot add: {}", err);
+                    return Err(FsWatchError::Watcher(err));
                 }
             }
         }
+        Ok(())
     }
 }

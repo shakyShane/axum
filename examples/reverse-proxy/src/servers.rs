@@ -1,15 +1,13 @@
 use crate::fs_watcher::FsWatchEvent;
-use crate::server_actor::{ServerActor, Stop2};
-use crate::server_config::{Content, RawContent, ServerConfig};
+use crate::server_actor::Stop2;
+use crate::server_config::ServerConfig;
 use crate::server_updates::Patch;
 use crate::{server_actor, ServerHandler};
-use actix::{Actor, Running};
-use actix_rt::Arbiter;
+use actix::Actor;
 use futures::future::join_all;
 use std::fs::read_to_string;
 use std::future::Future;
 use std::pin::Pin;
-use tokio::time;
 
 pub struct Servers {
     handlers: Vec<ServerHandler>,
@@ -98,12 +96,14 @@ impl actix::Handler<FsWatchEvent> for Servers {
 
     /// todo: accept more messages here
     fn handle(&mut self, msg: FsWatchEvent, ctx: &mut Self::Context) -> Self::Result {
+        tracing::trace!("FsWatchEvent {:?}", msg.absolute_path);
         if let Ok(string) = read_to_string(msg.absolute_path) {
             tracing::debug!("read {:?} bytes", string.len());
+            tracing::debug!("<<<CONTENT\n{}\n<<<END", string);
             for server_handlers in &self.handlers {
-                server_handlers.actor_address.do_send(Patch {
-                    html: string.clone(),
-                })
+                server_handlers
+                    .actor_address
+                    .do_send(Patch { routes: vec![] })
             }
         }
     }
@@ -114,9 +114,7 @@ impl actix::Handler<Patch> for Servers {
 
     fn handle(&mut self, msg: Patch, ctx: &mut Self::Context) -> Self::Result {
         for server_handlers in &self.handlers {
-            server_handlers
-                .actor_address
-                .do_send(Patch { html: "...".into() })
+            server_handlers.actor_address.do_send(msg.clone())
         }
     }
 }

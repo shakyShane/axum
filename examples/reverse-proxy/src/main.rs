@@ -1,4 +1,5 @@
 mod fs_watcher;
+mod input;
 mod server_actor;
 mod server_config;
 mod server_signals;
@@ -6,12 +7,14 @@ mod server_updates;
 mod servers;
 
 use crate::fs_watcher::FsWatcher;
+use crate::input::Input;
 use crate::server_config::{Route, ServerConfig};
 use crate::server_updates::Patch;
 use crate::servers::{Servers, StartMessage};
 use actix::dev::MessageResponse;
 use actix::prelude::*;
 use actix::Running::Stop;
+use anyhow::Error;
 use axum::body::Bytes;
 use axum::extract::FromRef;
 use axum::http::HeaderValue;
@@ -26,6 +29,7 @@ use axum::{
 use http_body_util::BodyExt;
 use hyper::StatusCode;
 use hyper_util::{client::legacy::connect::HttpConnector, rt::TokioExecutor};
+use std::env::current_dir;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time;
@@ -80,39 +84,40 @@ fn main() {
         let servers = Servers::new();
         let watcher = FsWatcher::new();
 
-
-        tracing::trace!("starting servers...");
+        tracing::trace!("[actor] starting servers...");
         let servers_addr = servers.start();
 
-        tracing::trace!("starting watcher for input.html");
+        tracing::trace!("[actor] starting watcher");
         let watcher_addr = watcher.start();
+
+        let cwd = PathBuf::from(current_dir().unwrap().to_string_lossy().to_string());
+        let input_path = cwd.join("fixtures/input.yml");
+        let input = Input::from_yaml_path(&input_path);
+
+        if let Err(error) = input {
+            tracing::error!("{}", error);
+            return;
+        }
+
+        let Ok(input) = input else {
+            todo!("unreachable");
+        };
 
         watcher_addr.do_send(crate::fs_watcher::WatchPath {
             recipients: vec![servers_addr.clone().recipient()],
-            path: PathBuf::from("/Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/input.html"),
+            path: input_path,
         });
 
         servers_addr.do_send(StartMessage {
-            server_configs: vec![
-                ServerConfig {
-                    bind_address: "127.0.0.1:3000".into(),
-                },
-                ServerConfig {
-                    bind_address: "127.0.0.1:4000".into(),
-                },
-            ],
+            server_configs: input.servers.clone(),
         });
 
-        servers_addr.do_send(crate::server_updates::Patch {
-            html: "oops!".into()
-        });
-
-
-        sleep(Duration::from_secs(5)).await;
-
-        servers_addr.do_send(crate::server_updates::Patch {
-            html: "oops2!".into()
-        });
+        // servers_addr.do_send(Patch { routes: input.servers });
+        if let Some(server) = input.servers.first() {
+            servers_addr.do_send(Patch {
+                routes: server.routes.clone(),
+            })
+        }
 
         sleep(Duration::from_secs(10000)).await;
 

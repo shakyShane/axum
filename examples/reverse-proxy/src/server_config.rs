@@ -1,25 +1,29 @@
 use std::path::PathBuf;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct ServerConfig {
     pub bind_address: String,
+    #[serde(default)]
+    pub routes: Vec<Route>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct Route {
     pub path: PathBuf,
     pub content: Content,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "type")]
 pub enum Content {
-    Raw(RawContent),
-    Dir(String),
+    Raw { raw: RawContent },
+    Dir { dir: String },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "type")]
 pub enum RawContent {
-    Html(String),
-    Css(String),
-    Js(String),
+    Html { html: String },
+    Css { css: String },
+    Js { js: String },
 }

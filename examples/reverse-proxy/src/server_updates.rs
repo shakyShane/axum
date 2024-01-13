@@ -1,5 +1,7 @@
-#[derive(actix::Message)]
+use crate::server_config::Route;
+
+#[derive(actix::Message, Clone)]
 #[rtype(result = "()")]
 pub struct Patch {
-    pub html: String,
+    pub routes: Vec<Route>,
 }
