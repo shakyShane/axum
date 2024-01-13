@@ -25,14 +25,22 @@ fn test_serialize() {
     let input = Input {
         servers: vec![ServerConfig {
             bind_address: "127.0.0.1".to_string(),
-            routes: vec![Route {
-                path: PathBuf::from("/"),
-                content: Content::Raw {
-                    raw: RawContent::Html {
-                        html: "html content".into(),
+            routes: vec![
+                Route {
+                    path: PathBuf::from("/assets"),
+                    content: Content::Dir {
+                        dir: "assets".into(),
                     },
                 },
-            }],
+                Route {
+                    path: PathBuf::from("/"),
+                    content: Content::Raw {
+                        raw: RawContent::Html {
+                            html: "html content".into(),
+                        },
+                    },
+                },
+            ],
         }],
     };
     let yaml = serde_yaml::to_string(&input).unwrap();

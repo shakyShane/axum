@@ -1,6 +1,10 @@
 servers:
   - bind_address: 127.0.0.1:3000
     routes:
+      - path: /assets
+        content:
+          type: Dir
+          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy
       - path: /
         content:
           type: Raw
