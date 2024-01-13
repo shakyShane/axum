@@ -6,7 +6,8 @@ mod server_updates;
 mod servers;
 
 use crate::fs_watcher::FsWatcher;
-use crate::server_config::{Route, ServerConfig, ServerConfigRoute};
+use crate::server_config::{Route, ServerConfig};
+use crate::server_updates::Patch;
 use crate::servers::{Servers, StartMessage};
 use actix::dev::MessageResponse;
 use actix::prelude::*;
@@ -85,6 +86,7 @@ fn main() {
 
         tracing::trace!("starting watcher for input.html");
         let watcher_addr = watcher.start();
+
         watcher_addr.do_send(crate::fs_watcher::WatchPath {
             recipients: vec![servers_addr.clone().recipient()],
             path: PathBuf::from("/Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/input.html"),
@@ -94,23 +96,22 @@ fn main() {
             server_configs: vec![
                 ServerConfig {
                     bind_address: "127.0.0.1:3000".into(),
-                    routes: vec![
-                        ServerConfigRoute {
-                            path: PathBuf::from("/"),
-                            route: Route::Html("hello world! from s1".into()),
-                        }
-                    ]
                 },
                 ServerConfig {
                     bind_address: "127.0.0.1:4000".into(),
-                    routes: vec![
-                        ServerConfigRoute {
-                            path: PathBuf::from("/"),
-                            route: Route::Html("hello world! from s2".into()),
-                        }
-                    ]
                 },
             ],
+        });
+
+        servers_addr.do_send(crate::server_updates::Patch {
+            html: "oops!".into()
+        });
+
+
+        sleep(Duration::from_secs(5)).await;
+
+        servers_addr.do_send(crate::server_updates::Patch {
+            html: "oops2!".into()
         });
 
         sleep(Duration::from_secs(10000)).await;

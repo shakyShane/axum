@@ -1,6 +1,6 @@
 use crate::fs_watcher::FsWatchEvent;
-use crate::server_actor::Stop2;
-use crate::server_config::ServerConfig;
+use crate::server_actor::{ServerActor, Stop2};
+use crate::server_config::{Content, RawContent, ServerConfig};
 use crate::server_updates::Patch;
 use crate::{server_actor, ServerHandler};
 use actix::{Actor, Running};
@@ -105,6 +105,18 @@ impl actix::Handler<FsWatchEvent> for Servers {
                     html: string.clone(),
                 })
             }
+        }
+    }
+}
+
+impl actix::Handler<Patch> for Servers {
+    type Result = ();
+
+    fn handle(&mut self, msg: Patch, ctx: &mut Self::Context) -> Self::Result {
+        for server_handlers in &self.handlers {
+            server_handlers
+                .actor_address
+                .do_send(Patch { html: "...".into() })
         }
     }
 }

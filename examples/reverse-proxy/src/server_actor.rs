@@ -1,14 +1,16 @@
-use crate::server_config::{Route, ServerConfig, ServerConfigRoute};
+use crate::server_config::{Content, RawContent, Route, ServerConfig};
 use crate::server_signals::ServerSignals;
 use crate::server_updates::Patch;
 use actix::{ActorContext, AsyncContext, Running};
 use actix_rt::Arbiter;
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
-use axum::routing::get;
-use axum::Router;
+use axum::extract::{Request, State};
+use axum::http::{StatusCode, Uri};
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::{any, get};
+use axum::{Router, ServiceExt};
+use matchit::{InsertError, Match, MatchError};
 use std::future::Future;
+use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender};
@@ -16,7 +18,7 @@ use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender};
 pub struct ServerActor {
     pub config: ServerConfig,
     pub signals: Option<ServerSignals>,
-    pub app_state: Option<Arc<Mutex<AppState>>>,
+    pub app_state: Option<Arc<AppState>>,
 }
 
 impl ServerActor {
@@ -41,25 +43,9 @@ impl ServerActor {
     pub async fn stop_server(&mut self) {}
 }
 
-struct AppState {
-    routes: Vec<ServerConfigRoute>,
-}
-
 #[derive(Clone)]
-struct Matched {
-    index: usize,
-    app_state: Arc<Mutex<AppState>>,
-}
-
-impl IntoResponse for Matched {
-    fn into_response(self) -> Response {
-        match self.app_state.lock().unwrap().routes.get(self.index) {
-            None => todo!("how?"),
-            Some(v) => match &v.route {
-                Route::Html(string) => string.clone().into_response(),
-            },
-        }
-    }
+struct AppState {
+    pub routes: Arc<Mutex<matchit::Router<Content>>>,
 }
 
 impl actix::Actor for ServerActor {
@@ -69,32 +55,19 @@ impl actix::Actor for ServerActor {
         let addr = self.config.bind_address.clone();
         let (send_complete, received_stop) = self.install_signals();
 
-        let app_state = Arc::new(Mutex::new(AppState {
-            routes: self.config.routes.clone(),
-        }));
+        let router = matchit::Router::new();
+        let app_state = Arc::new(AppState {
+            routes: Arc::new(Mutex::new(router)),
+        });
 
         self.app_state = Some(app_state.clone());
 
-        let config = self.config.clone();
-
         let server = async move {
-            let mut app = Router::new()
-                .route("/_", get(|| async { "yay!" }))
-                .with_state(app_state.clone());
-
-            for (index, route) in config.routes.into_iter().enumerate() {
-                tracing::debug!("adding route for {:?}", route.path);
-                let matched = Matched {
-                    index,
-                    app_state: app_state.clone(),
-                };
-                app = app.merge(Router::new().route(route.path.to_str().unwrap(), get(matched)));
-            }
-
+            let app = any(get_dyn).with_state(app_state.clone());
             let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-
             tracing::debug!("axum: listening on {}", listener.local_addr().unwrap());
-            match axum::serve(listener, app)
+
+            match axum::serve(listener, app.into_make_service())
                 .with_graceful_shutdown(async { received_stop.await.unwrap() })
                 .await
             {
@@ -123,13 +96,28 @@ impl actix::Actor for ServerActor {
     }
 }
 
-async fn get_dyn(
-    State(app_state): State<Arc<Mutex<AppState>>>,
-    State(index): State<usize>,
-) -> Result<String, (StatusCode, String)> {
-    // let v = arc.lock().unwrap();
-    // for x in app_state.lock().unwrap().routes {}
-    Ok("Shane".into())
+async fn get_dyn(State(app): State<Arc<AppState>>, uri: Uri, req: Request) -> Response {
+    tracing::trace!("incoming, uri={:?}", uri);
+    let v = app.routes.lock().unwrap();
+    let matched = v.at(uri.path());
+
+    let Ok(matched) = matched else {
+        return format!("get_dyn NOT FOUND {}", uri.path()).into_response();
+    };
+
+    let content = matched.value;
+    let params = matched.params;
+
+    for (key, value) in params.iter() {
+        println!("{}={}", key, value);
+    }
+
+    match content {
+        Content::Raw(RawContent::Html(html)) => Html(html.clone()).into_response(),
+        Content::Raw(RawContent::Css(_)) => todo!("not implemented yet"),
+        Content::Raw(RawContent::Js(_)) => todo!("not implemented yet"),
+        Content::Dir(_) => "{}".into_response(),
+    }
 }
 
 #[derive(actix::Message)]
@@ -168,6 +156,20 @@ impl actix::Handler<Patch> for ServerActor {
     type Result = ();
 
     fn handle(&mut self, msg: Patch, ctx: &mut Self::Context) -> Self::Result {
-        // *self.html.lock().unwrap() = String::from(msg.html)
+        tracing::trace!("ServerActor received");
+        let path = "/";
+        if let Some(app_state) = &self.app_state {
+            let mut router = app_state.routes.lock().unwrap();
+            let existing = router.at_mut(path);
+            if let Ok(mut prev) = existing {
+                *prev.value = Content::Raw(RawContent::Html("updated".into()));
+                tracing::trace!("updated mutable route at {}", path)
+            } else if let Err(err) = existing {
+                match router.insert(path, Content::Raw(RawContent::Html("hello world!".into()))) {
+                    Ok(_) => tracing::trace!("inserted"),
+                    Err(_) => tracing::error!("could not insert {:?}", err.to_string()),
+                };
+            }
+        }
     }
 }
