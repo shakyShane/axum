@@ -1,5 +1,6 @@
 use actix::{Actor, AsyncContext, Handler, Recipient};
-use notify::{ErrorKind, RecursiveMode, Watcher};
+use notify::event::{DataChange, ModifyKind};
+use notify::{ErrorKind, EventKind, RecursiveMode, Watcher};
 use std::path::PathBuf;
 
 pub struct FsWatcher {
@@ -36,12 +37,34 @@ impl Actor for FsWatcher {
         let self_address = ctx.address();
         if let Ok(mut watcher) =
             notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
-                Ok(event) => {
-                    tracing::trace!("{:#?}, {:?}", event.kind, event.paths);
-                    self_address.do_send(FsWatchEvent {
-                        absolute_path: event.paths.get(0).unwrap().into(),
-                    })
-                }
+                Ok(event) => match event.kind {
+                    EventKind::Any => {}
+                    EventKind::Access(_) => {}
+                    EventKind::Create(_) => {}
+                    EventKind::Modify(modify) => match modify {
+                        ModifyKind::Any => {}
+                        ModifyKind::Data(data) => match data {
+                            DataChange::Any => {}
+                            DataChange::Size => {}
+                            DataChange::Content => {
+                                tracing::debug!(
+                                    "responding to {:?}, {:?}",
+                                    event.kind,
+                                    event.paths
+                                );
+                                self_address.do_send(FsWatchEvent {
+                                    absolute_path: event.paths.get(0).unwrap().into(),
+                                })
+                            }
+                            DataChange::Other => {}
+                        },
+                        ModifyKind::Metadata(_) => {}
+                        ModifyKind::Name(_) => {}
+                        ModifyKind::Other => {}
+                    },
+                    EventKind::Remove(_) => {}
+                    EventKind::Other => {}
+                },
                 Err(e) => {
                     tracing::error!("fswadtcher {:?}", e);
                     println!("watch error: {:?}", e);
@@ -56,6 +79,8 @@ impl Actor for FsWatcher {
 impl Handler<FsWatchEvent> for FsWatcher {
     type Result = ();
     fn handle(&mut self, msg: FsWatchEvent, ctx: &mut Self::Context) -> Self::Result {
+        tracing::trace!("FsWatchEvent for FsWatcher");
+        tracing::trace!("  └ sending to {} receivers", self.receivers.len());
         for x in &self.receivers {
             x.do_send(FsWatchEvent {
                 absolute_path: msg.absolute_path.clone(),

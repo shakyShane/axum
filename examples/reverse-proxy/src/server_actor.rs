@@ -1,14 +1,14 @@
 use crate::server_config::{Content, RawContent, Route, ServerConfig};
 use crate::server_signals::ServerSignals;
-use crate::server_updates::Patch;
+use crate::server_updates::{Patch, PatchOne};
 use actix::{ActorContext, AsyncContext, Running};
 use actix_rt::Arbiter;
 use axum::extract::{Request, State};
-use axum::http::{StatusCode, Uri};
+use axum::http::{HeaderValue, StatusCode, Uri};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{any, get};
-use axum::{Router, ServiceExt};
-use matchit::{InsertError, Match, MatchError};
+use axum::ServiceExt;
+use hyper::header::CONTENT_TYPE;
 use std::future::Future;
 use std::hash::Hash;
 use std::pin::Pin;
@@ -38,9 +38,8 @@ impl ServerActor {
             complete_mdg_receiver: Some(shutdown_complete_receiver),
         });
 
-        return (shutdown_complete, stop_server_receiver);
+        (shutdown_complete, stop_server_receiver)
     }
-    pub async fn stop_server(&mut self) {}
 }
 
 #[derive(Clone)]
@@ -102,7 +101,7 @@ async fn get_dyn(State(app): State<Arc<AppState>>, uri: Uri, req: Request) -> Re
     let matched = v.at(uri.path());
 
     let Ok(matched) = matched else {
-        return format!("get_dyn NOT FOUND {}", uri.path()).into_response();
+        return (StatusCode::NOT_FOUND, "not_found").into_response();
     };
 
     let content = matched.value;
@@ -118,12 +117,19 @@ async fn get_dyn(State(app): State<Arc<AppState>>, uri: Uri, req: Request) -> Re
         } => Html(html.clone()).into_response(),
         Content::Raw {
             raw: RawContent::Css { css },
-        } => todo!("not implemented yet"),
+        } => text_asset_response(uri.path(), css),
         Content::Raw {
-            raw: RawContent::Js { .. },
-        } => todo!("not implemented yet"),
+            raw: RawContent::Js { js },
+        } => text_asset_response(uri.path(), js),
         Content::Dir { .. } => "{}".into_response(),
     }
+}
+
+fn text_asset_response(path: &str, css: &str) -> Response {
+    let mime = mime_guess::from_path(path);
+    let aas_str = mime.first_or_text_plain();
+    let cloned = css.to_owned();
+    ([(CONTENT_TYPE, aas_str.to_string())], cloned).into_response()
 }
 
 #[derive(actix::Message)]
@@ -158,24 +164,23 @@ impl actix::Handler<Stop2> for ServerActor {
     }
 }
 
-impl actix::Handler<Patch> for ServerActor {
+impl actix::Handler<PatchOne> for ServerActor {
     type Result = ();
 
-    fn handle(&mut self, msg: Patch, ctx: &mut Self::Context) -> Self::Result {
-        tracing::trace!("ServerActor received");
+    fn handle(&mut self, msg: PatchOne, ctx: &mut Self::Context) -> Self::Result {
+        tracing::trace!("Handler<PatchOne> for ServerActor");
         if let Some(app_state) = &self.app_state {
             let mut router = app_state.routes.lock().unwrap();
-
-            for route in msg.routes {
+            for route in msg.server_config.routes {
                 let path = route.path.to_str().unwrap();
                 let existing = router.at_mut(path);
                 if let Ok(mut prev) = existing {
                     *prev.value = route.content;
-                    tracing::trace!("updated mutable route at {}", path)
+                    tracing::trace!(" └ updated mutable route at {}", path)
                 } else if let Err(err) = existing {
-                    match router.insert(path, route.content) {
-                        Ok(_) => tracing::trace!("inserted"),
-                        Err(_) => tracing::error!("could not insert {:?}", err.to_string()),
+                    match router.insert(path, route.content.clone()) {
+                        Ok(_) => tracing::trace!("  └ inserted {} with {:?}", path, route.content),
+                        Err(_) => tracing::error!("  └ could not insert {:?}", err.to_string()),
                     };
                 }
             }

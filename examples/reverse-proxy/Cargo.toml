@@ -21,3 +21,4 @@ matchit = { version = "0.7.3" }
 serde = { version = "1.0.152", features = ["derive"] }
 serde_yaml = "0.9.30"
 thiserror = "1.0.38"
+mime_guess = "2.0.4"

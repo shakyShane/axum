@@ -1,7 +1,8 @@
 use crate::fs_watcher::FsWatchEvent;
+use crate::input::Input;
 use crate::server_actor::Stop2;
 use crate::server_config::ServerConfig;
-use crate::server_updates::Patch;
+use crate::server_updates::{Patch, PatchOne};
 use crate::{server_actor, ServerHandler};
 use actix::Actor;
 use futures::future::join_all;
@@ -35,38 +36,22 @@ impl actix::Handler<StartMessage> for Servers {
     type Result = ();
 
     fn handle(&mut self, msg: StartMessage, ctx: &mut Self::Context) -> Self::Result {
-        tracing::trace!("creating server actors {:#?}", msg.server_configs);
+        tracing::trace!("creating server actors {:?}", msg.server_configs);
 
         let server_handlers = msg
             .server_configs
             .into_iter()
             .map(|server_config| {
-                let server = server_actor::ServerActor::new_from_config(server_config);
+                let server = server_actor::ServerActor::new_from_config(server_config.clone());
                 let actor_addr = server.start();
-                let server_address = ServerHandler {
+                ServerHandler {
                     actor_address: actor_addr,
-                };
-                server_address
+                    bind_address: server_config.bind_address.clone(),
+                }
             })
             .collect::<Vec<ServerHandler>>();
 
         self.handlers.extend(server_handlers);
-        let clone = self.handlers.clone();
-
-        // Arbiter::current().spawn(async move {
-        //     let mut interval = time::interval(time::Duration::from_secs(1));
-        //     let mut count = 0;
-        //     for _i in 0..200 {
-        //         interval.tick().await;
-        //         count += 1;
-        //         tracing::debug!("sending tick! {} to {}", count, clone.len());
-        //         for x in &clone {
-        //             x.actor_address.do_send(Patch {
-        //                 html: format!("count: {count}"),
-        //             })
-        //         }
-        //     }
-        // });
     }
 }
 
@@ -96,15 +81,35 @@ impl actix::Handler<FsWatchEvent> for Servers {
 
     /// todo: accept more messages here
     fn handle(&mut self, msg: FsWatchEvent, ctx: &mut Self::Context) -> Self::Result {
-        tracing::trace!("FsWatchEvent {:?}", msg.absolute_path);
-        if let Ok(string) = read_to_string(msg.absolute_path) {
-            tracing::debug!("read {:?} bytes", string.len());
-            tracing::debug!("<<<CONTENT\n{}\n<<<END", string);
-            for server_handlers in &self.handlers {
-                server_handlers
-                    .actor_address
-                    .do_send(Patch { routes: vec![] })
+        tracing::trace!("FsWatchEvent for Servers");
+        tracing::trace!("  └ {:?}", msg.absolute_path);
+        let is_input = true;
+        if is_input {
+            // todo(Shane): implement removal of routes
+            let input = Input::from_yaml_path(&msg.absolute_path);
+            if let Ok(input) = input {
+                tracing::trace!("  └ read input {:?}", input);
+
+                for server_config in input.servers {
+                    if let Some(matching_child) = self
+                        .handlers
+                        .iter()
+                        .find(|h| h.bind_address == server_config.bind_address)
+                    {
+                        tracing::trace!(
+                            "  └ found matching for bind_address {}",
+                            server_config.bind_address
+                        );
+                        matching_child
+                            .actor_address
+                            .do_send(PatchOne { server_config });
+                    }
+                }
+            } else if let Err(e) = input {
+                tracing::error!("{:?}", e);
             }
+        } else {
+            tracing::debug!("  └ discarding change event for {:?}", msg.absolute_path);
         }
     }
 }
@@ -113,8 +118,26 @@ impl actix::Handler<Patch> for Servers {
     type Result = ();
 
     fn handle(&mut self, msg: Patch, ctx: &mut Self::Context) -> Self::Result {
-        for server_handlers in &self.handlers {
-            server_handlers.actor_address.do_send(msg.clone())
+        tracing::trace!("Handler<Patch> for Servers");
+        tracing::trace!(
+            "  └ {} incoming msg.server_configs",
+            msg.server_configs.len()
+        );
+        for server_config in msg.server_configs {
+            if let Some(matching_child) = self
+                .handlers
+                .iter()
+                .find(|h| h.bind_address == server_config.bind_address)
+            {
+                tracing::trace!(
+                    "  └ found matching for bind_address {}",
+                    server_config.bind_address
+                );
+                tracing::trace!("    └ sending PatchOne to {}", server_config.bind_address);
+                matching_child
+                    .actor_address
+                    .do_send(PatchOne { server_config });
+            }
         }
     }
 }

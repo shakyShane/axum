@@ -1,5 +1,5 @@
 servers:
-  - bind_address: 127.0.0.1:5000
+  - bind_address: 127.0.0.1:3000
     routes:
       - path: /
         content:
@@ -7,4 +7,52 @@ servers:
           raw:
             type: Html
             html: |
-              <html>here..</html>
+              <html>
+                  <head></head>
+                  <body>s
+                  <p class="alert">Beware of the zombies</p> 
+                  <script type="module">
+                      console.log("bedfore.s..")
+                  </script>
+                  </body>
+              </html>
+      - path: /styles.css
+        content:
+          type: Raw
+          raw:
+            type: Css
+            css: |
+              @layer state, module;
+              
+              @layer state {
+                  .alert {
+                      background-color: brown;
+                  }
+                  p {
+                      border: medium solid limegreen;
+                  }
+              }
+              
+              @layer module {
+                  .alert {
+                      border: medium solid violet;
+                      background-color: yellow;
+                      color: white;
+                  }
+              }
+
+  - bind_address: 127.0.0.1:3001
+    routes:
+      - path: "/"
+        content:
+          type: Raw
+          raw:
+            type: Html
+            html: hey!
+      - path: /script.js
+        content:
+          type: Raw
+          raw:
+            type: Js
+            js: |
+              console.log(location.href)

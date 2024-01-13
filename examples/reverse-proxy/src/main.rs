@@ -68,6 +68,7 @@ struct Ping(usize);
 #[derive(Debug, Clone)]
 struct ServerHandler {
     actor_address: actix::Addr<server_actor::ServerActor>,
+    bind_address: String,
 }
 fn main() {
     tracing_subscriber::registry()
@@ -108,16 +109,15 @@ fn main() {
             path: input_path,
         });
 
-        servers_addr.do_send(StartMessage {
+        let servers_done = servers_addr
+            .send(StartMessage {
+                server_configs: input.servers.clone(),
+            })
+            .await;
+
+        servers_addr.do_send(Patch {
             server_configs: input.servers.clone(),
         });
-
-        // servers_addr.do_send(Patch { routes: input.servers });
-        if let Some(server) = input.servers.first() {
-            servers_addr.do_send(Patch {
-                routes: server.routes.clone(),
-            })
-        }
 
         sleep(Duration::from_secs(10000)).await;
 
