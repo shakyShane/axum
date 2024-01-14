@@ -5,15 +5,18 @@ use actix::{ActorContext, AsyncContext, Running};
 use actix_rt::Arbiter;
 use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode, Uri};
+use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{any, get};
-use axum::ServiceExt;
+use axum::routing::any;
+use axum::Router;
 use hyper::header::CONTENT_TYPE;
 use std::future::Future;
 use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender};
+use tower::{Service, ServiceExt};
+use tower_http::services::ServeDir;
 
 pub struct ServerActor {
     pub config: ServerConfig,
@@ -95,8 +98,54 @@ impl actix::Actor for ServerActor {
     }
 }
 
-async fn get_dyn(State(app): State<Arc<AppState>>, uri: Uri, req: Request) -> Response {
-    tracing::trace!("incoming, uri={:?}", uri);
+async fn raw_loader_alt(
+    State(app): State<Arc<AppState>>,
+    req: Request,
+    uri: Uri,
+    next: Next,
+) -> impl IntoResponse {
+    tracing::trace!("-> raw_loader_alt");
+    {
+        let v = app.routes.lock().unwrap();
+        // let matched = v.at(uri.path());
+        println!("v===s");
+    }
+    let svc = ServeDir::new(".");
+    let result = svc.oneshot(req).await;
+    tracing::trace!("<- raw_loader_alt");
+    return result;
+}
+
+async fn raw_loader(
+    State(app): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> impl IntoResponse {
+    tracing::trace!("-> raw_loader");
+    // let response = next.run(req).await;
+    let mut router = Router::new();
+
+    {
+        router = router.nest_service("/assets", ServeDir::new("."));
+    }
+
+    let r = router
+        .as_service()
+        .ready()
+        .await
+        .unwrap()
+        .call(req)
+        .await
+        .unwrap()
+        .into_response();
+
+    tracing::trace!("<- raw_loader");
+
+    return r;
+}
+
+async fn get_dyn(State(app): State<Arc<AppState>>, uri: Uri, req: Request) -> impl IntoResponse {
+    tracing::trace!("get_dyn handler incoming, uri={:?}", uri);
     let v = app.routes.lock().unwrap();
     let matched = v.at(uri.path());
 

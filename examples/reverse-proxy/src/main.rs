@@ -92,7 +92,7 @@ fn main() {
         let watcher_addr = watcher.start();
 
         let cwd = PathBuf::from(current_dir().unwrap().to_string_lossy().to_string());
-        let input_path = cwd.join("fixtures/input.yml");
+        let input_path = cwd.join("examples/reverse-proxy/fixtures/input.yml");
         let input = Input::from_yaml_path(&input_path);
 
         if let Err(error) = input {
