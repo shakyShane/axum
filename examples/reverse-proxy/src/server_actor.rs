@@ -1,4 +1,5 @@
 use crate::server_config::{Content, RawContent, Route, ServerConfig};
+use crate::server_handlers::{built_ins, dynamic_loaders};
 use crate::server_signals::ServerSignals;
 use crate::server_updates::{Patch, PatchOne};
 use actix::{ActorContext, AsyncContext, Running};
@@ -7,14 +8,13 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode, Uri};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::any;
 use axum::Router;
 use hyper::header::CONTENT_TYPE;
 use std::future::Future;
 use std::hash::Hash;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender};
+use std::sync::Arc;
+use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender, Mutex};
 use tower::{Service, ServiceExt};
 use tower_http::services::ServeDir;
 
@@ -46,7 +46,7 @@ impl ServerActor {
 }
 
 #[derive(Clone)]
-struct AppState {
+pub struct AppState {
     pub routes: Arc<Mutex<matchit::Router<Content>>>,
 }
 
@@ -65,11 +65,14 @@ impl actix::Actor for ServerActor {
         self.app_state = Some(app_state.clone());
 
         let server = async move {
-            let app = any(get_dyn).with_state(app_state.clone());
+            let router = Router::new()
+                .merge(built_ins(app_state.clone()))
+                .merge(dynamic_loaders(app_state.clone()));
+
             let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
             tracing::debug!("axum: listening on {}", listener.local_addr().unwrap());
 
-            match axum::serve(listener, app.into_make_service())
+            match axum::serve(listener, router)
                 .with_graceful_shutdown(async { received_stop.await.unwrap() })
                 .await
             {
@@ -98,55 +101,9 @@ impl actix::Actor for ServerActor {
     }
 }
 
-async fn raw_loader_alt(
-    State(app): State<Arc<AppState>>,
-    req: Request,
-    uri: Uri,
-    next: Next,
-) -> impl IntoResponse {
-    tracing::trace!("-> raw_loader_alt");
-    {
-        let v = app.routes.lock().unwrap();
-        // let matched = v.at(uri.path());
-        println!("v===s");
-    }
-    let svc = ServeDir::new(".");
-    let result = svc.oneshot(req).await;
-    tracing::trace!("<- raw_loader_alt");
-    return result;
-}
-
-async fn raw_loader(
-    State(app): State<Arc<AppState>>,
-    req: Request,
-    next: Next,
-) -> impl IntoResponse {
-    tracing::trace!("-> raw_loader");
-    // let response = next.run(req).await;
-    let mut router = Router::new();
-
-    {
-        router = router.nest_service("/assets", ServeDir::new("."));
-    }
-
-    let r = router
-        .as_service()
-        .ready()
-        .await
-        .unwrap()
-        .call(req)
-        .await
-        .unwrap()
-        .into_response();
-
-    tracing::trace!("<- raw_loader");
-
-    return r;
-}
-
 async fn get_dyn(State(app): State<Arc<AppState>>, uri: Uri, req: Request) -> impl IntoResponse {
     tracing::trace!("get_dyn handler incoming, uri={:?}", uri);
-    let v = app.routes.lock().unwrap();
+    let v = app.routes.lock().await;
     let matched = v.at(uri.path());
 
     let Ok(matched) = matched else {
@@ -219,20 +176,27 @@ impl actix::Handler<PatchOne> for ServerActor {
     fn handle(&mut self, msg: PatchOne, ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!("Handler<PatchOne> for ServerActor");
         if let Some(app_state) = &self.app_state {
-            let mut router = app_state.routes.lock().unwrap();
-            for route in msg.server_config.routes {
-                let path = route.path.to_str().unwrap();
-                let existing = router.at_mut(path);
-                if let Ok(mut prev) = existing {
-                    *prev.value = route.content;
-                    tracing::trace!(" └ updated mutable route at {}", path)
-                } else if let Err(err) = existing {
-                    match router.insert(path, route.content.clone()) {
-                        Ok(_) => tracing::trace!("  └ inserted {} with {:?}", path, route.content),
-                        Err(_) => tracing::error!("  └ could not insert {:?}", err.to_string()),
-                    };
+            let s_c = app_state.clone();
+            let routes = msg.server_config.routes.clone();
+            let update_dn = async move {
+                let mut router = s_c.routes.lock().await;
+                for route in routes {
+                    let path = route.path.to_str().unwrap();
+                    let existing = router.at_mut(path);
+                    if let Ok(mut prev) = existing {
+                        *prev.value = route.content;
+                        tracing::trace!(" └ updated mutable route at {}", path)
+                    } else if let Err(err) = existing {
+                        match router.insert(path, route.content.clone()) {
+                            Ok(_) => {
+                                tracing::trace!("  └ inserted {} with {:?}", path, route.content)
+                            }
+                            Err(_) => tracing::error!("  └ could not insert {:?}", err.to_string()),
+                        };
+                    }
                 }
-            }
+            };
+            Arbiter::current().spawn(update_dn);
         }
     }
 }

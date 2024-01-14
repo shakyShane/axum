@@ -2,6 +2,7 @@ mod fs_watcher;
 mod input;
 mod server_actor;
 mod server_config;
+mod server_handlers;
 mod server_signals;
 mod server_updates;
 mod servers;
