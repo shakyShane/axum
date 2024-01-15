@@ -72,12 +72,13 @@ struct ServerHandler {
     bind_address: String,
 }
 fn main() {
+    let fmt_layer = tracing_subscriber::fmt::layer().without_time();
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "example_reverse_proxy=trace,tower_http=debug".into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(fmt_layer)
         .init();
 
     let system = System::new();

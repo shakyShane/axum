@@ -44,14 +44,18 @@ async fn never(State(app): State<Arc<AppState>>, req: Request) -> impl IntoRespo
 }
 
 async fn serve_dir_loader(State(app): State<Arc<AppState>>, req: Request, next: Next) -> Response {
-    println!("  -> serve_dir_loader {}", req.uri().path());
+    tracing::trace!("  -> serve_dir_loader {}", req.uri().path());
 
     {
+        // 1. collect all paths
+        // 2. register
+
         let v = app.routes.lock().await;
+        tracing::trace!("got a 🔒");
         let matched = v.at(req.uri().path());
 
         let Ok(matched) = matched else {
-            tracing::trace!("returning a not found... {}", req.uri());
+            tracing::trace!("  -> returning a not found... {}", req.uri());
             return (StatusCode::NOT_FOUND, "not_found").into_response();
         };
 
@@ -64,7 +68,7 @@ async fn serve_dir_loader(State(app): State<Arc<AppState>>, req: Request, next: 
 
         match content {
             Content::Dir { dir } => {
-                tracing::trace!("pther {} {}", dir, req.uri().path());
+                tracing::trace!("~~ here {} {}", dir, req.uri().path());
                 let s = ServeDir::new(dir);
                 let mut service = ServiceBuilder::new()
                     .boxed()
@@ -88,36 +92,47 @@ async fn raw_loader(
     req: Request,
     next: Next,
 ) -> impl IntoResponse {
-    println!("-> raw_loader");
+    tracing::trace!("-> raw_loader");
 
     {
         let v = app.routes.lock().await;
         let matched = v.at(req.uri().path());
 
         let Ok(matched) = matched else {
-            tracing::trace!("returning a not found... {}", req.uri());
-            return (StatusCode::NOT_FOUND, "not_found").into_response();
+            drop(v);
+            let r = next.run(req).await;
+            println!("<- raw_loader");
+            return r;
         };
 
         let content = matched.value;
         let params = matched.params;
 
         for (key, value) in params.iter() {
-            println!("{}={}", key, value);
+            tracing::trace!("-> {}={}", key, value);
         }
 
         match content {
             Content::Raw {
                 raw: RawContent::Html { html },
-            } => return Html(html.clone()).into_response(),
+            } => {
+                tracing::trace!("-> served HTML");
+                return Html(html.clone()).into_response();
+            }
             Content::Raw {
                 raw: RawContent::Css { css },
-            } => return text_asset_response(req.uri().path(), css),
+            } => {
+                tracing::trace!("-> served css");
+                return text_asset_response(req.uri().path(), css);
+            }
             Content::Raw {
                 raw: RawContent::Js { js },
-            } => return text_asset_response(req.uri().path(), js),
+            } => {
+                tracing::trace!("-> served js");
+                return text_asset_response(req.uri().path(), js);
+            }
             Content::Dir { dir } => {
-                tracing::trace!("ignoring a Dir match {}", dir);
+                // tracing::trace!("-> ignoring a Dir match {}", dir);
                 // nothing...
             }
         }
