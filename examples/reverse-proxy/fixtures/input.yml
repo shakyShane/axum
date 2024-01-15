@@ -1,14 +1,14 @@
 servers:
   - bind_address: 127.0.0.1:3000
     routes:
-      - path: /assets/shane
+      - path: /here
         content:
           type: Dir
-          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/readme
+          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures
       - path: /assets
         content:
           type: Dir
-          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy
+          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures
       - path: /
         content:
           type: Raw

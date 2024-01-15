@@ -5,7 +5,7 @@ use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderValue, StatusCode, Uri};
 use axum::middleware::{from_fn_with_state, Next};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{any, MethodRouter};
+use axum::routing::{any, any_service, MethodRouter};
 use axum::{http, Router};
 use std::sync::Arc;
 use tower::{Service, ServiceBuilder, ServiceExt};
@@ -46,45 +46,17 @@ async fn never(State(app): State<Arc<AppState>>, req: Request) -> impl IntoRespo
 async fn serve_dir_loader(State(app): State<Arc<AppState>>, req: Request, next: Next) -> Response {
     tracing::trace!("  -> serve_dir_loader {}", req.uri().path());
 
-    {
-        // 1. collect all paths
-        // 2. register
+    let bindings = app.dir_bindings.lock().await;
+    let mut app = Router::new();
 
-        let v = app.routes.lock().await;
-        tracing::trace!("got a 🔒");
-        let matched = v.at(req.uri().path());
-
-        let Ok(matched) = matched else {
-            tracing::trace!("  -> returning a not found... {}", req.uri());
-            return (StatusCode::NOT_FOUND, "not_found").into_response();
-        };
-
-        let content = matched.value;
-        let params = matched.params;
-
-        for (key, value) in params.iter() {
-            println!("{}={}", key, value);
-        }
-
-        match content {
-            Content::Dir { dir } => {
-                tracing::trace!("~~ here {} {}", dir, req.uri().path());
-                let s = ServeDir::new(dir);
-                let mut service = ServiceBuilder::new()
-                    .boxed()
-                    .layer(CompressionLayer::new())
-                    .service(s);
-
-                let r = service.ready().await.unwrap().call(req).await;
-                return r.into_response();
-            }
-            _ => {}
-        }
+    for (num, (k, v)) in bindings.iter().enumerate() {
+        app = app.nest_service(k, any_service(ServeDir::new(v)));
     }
 
-    let r = next.run(req).await;
-    println!("  <- serve_dir_loader");
-    r.into_response()
+    let r = app.oneshot(req).await.unwrap();
+    let r = r.into_response();
+    tracing::trace!("  <- serve_dir_loader");
+    return r;
 }
 
 async fn raw_loader(

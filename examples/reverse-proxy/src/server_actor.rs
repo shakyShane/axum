@@ -4,12 +4,14 @@ use crate::server_signals::ServerSignals;
 use crate::server_updates::{Patch, PatchOne};
 use actix::{ActorContext, AsyncContext, Running};
 use actix_rt::Arbiter;
+use anyhow::anyhow;
 use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode, Uri};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
 use axum::Router;
 use hyper::header::CONTENT_TYPE;
+use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
 use std::pin::Pin;
@@ -48,6 +50,7 @@ impl ServerActor {
 #[derive(Clone)]
 pub struct AppState {
     pub routes: Arc<Mutex<matchit::Router<Content>>>,
+    pub dir_bindings: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl actix::Actor for ServerActor {
@@ -58,8 +61,11 @@ impl actix::Actor for ServerActor {
         let (send_complete, received_stop) = self.install_signals();
 
         let router = matchit::Router::new();
+        let dir_bindings = HashMap::new();
+
         let app_state = Arc::new(AppState {
             routes: Arc::new(Mutex::new(router)),
+            dir_bindings: Arc::new(Mutex::new(dir_bindings)),
         });
 
         self.app_state = Some(app_state.clone());
@@ -171,32 +177,53 @@ impl actix::Handler<Stop2> for ServerActor {
 }
 
 impl actix::Handler<PatchOne> for ServerActor {
-    type Result = ();
+    type Result = anyhow::Result<()>;
 
     fn handle(&mut self, msg: PatchOne, ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!("Handler<PatchOne> for ServerActor");
-        if let Some(app_state) = &self.app_state {
-            let s_c = app_state.clone();
-            let routes = msg.server_config.routes.clone();
-            let update_dn = async move {
-                let mut router = s_c.routes.lock().await;
-                for route in routes {
-                    let path = route.path.to_str().unwrap();
-                    let existing = router.at_mut(path);
-                    if let Ok(mut prev) = existing {
-                        *prev.value = route.content;
-                        tracing::trace!(" └ updated mutable route at {}", path)
-                    } else if let Err(err) = existing {
-                        match router.insert(path, route.content.clone()) {
-                            Ok(_) => {
-                                tracing::trace!("  └ inserted {} with {:?}", path, route.content)
-                            }
-                            Err(_) => tracing::error!("  └ could not insert {:?}", err.to_string()),
-                        };
+        let app_state = self
+            .app_state
+            .as_ref()
+            .ok_or(anyhow!("could not access state"))?;
+        let s_c = app_state.clone();
+        let routes = msg.server_config.routes.clone();
+        let update_dn = async move {
+            let mut router = s_c.routes.lock().await;
+            for route in routes {
+                match route.content {
+                    Content::Raw { .. } => {
+                        let path = route.path.to_str().unwrap();
+                        let existing = router.at_mut(path);
+                        if let Ok(mut prev) = existing {
+                            *prev.value = route.content;
+                            tracing::trace!(" └ updated mutable route at {}", path)
+                        } else if let Err(err) = existing {
+                            match router.insert(path, route.content.clone()) {
+                                Ok(_) => {
+                                    tracing::trace!(
+                                        "  └ inserted {} with {:?}",
+                                        path,
+                                        route.content
+                                    )
+                                }
+                                Err(_) => {
+                                    tracing::error!("  └ could not insert {:?}", err.to_string())
+                                }
+                            };
+                        }
+                    }
+                    Content::Dir { dir } => {
+                        let path = route.path.to_str().unwrap();
+                        let mut dir_bindings = s_c.dir_bindings.lock().await;
+                        dir_bindings.insert(path.to_owned(), dir.clone());
+                        tracing::trace!(" └ updated dir_bindings at {} with {}", path, dir.clone());
+                        drop(dir_bindings);
                     }
                 }
-            };
-            Arbiter::current().spawn(update_dn);
-        }
+            }
+        };
+
+        Arbiter::current().spawn(update_dn);
+        Ok(())
     }
 }

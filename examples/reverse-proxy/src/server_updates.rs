@@ -7,7 +7,7 @@ pub struct Patch {
 }
 
 #[derive(actix::Message, Clone)]
-#[rtype(result = "()")]
+#[rtype(result = "anyhow::Result<()>")]
 pub struct PatchOne {
     pub server_config: crate::server_config::ServerConfig,
 }
