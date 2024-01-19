@@ -1,14 +1,22 @@
 servers:
   - bind_address: 127.0.0.1:3000
     routes:
+      - path: /
+        content:
+          type: Dir
+          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy
       - path: /here
         content:
           type: Dir
           dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures
-      - path: /assets
+      - path: /a-file
         content:
           type: Dir
-          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures
+          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/app.js
+      - path: /a-file-2
+        content:
+          type: Dir
+          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/app.js
       - path: /
         content:
           type: Raw
@@ -16,14 +24,30 @@ servers:
             type: Html
             html: |
               <html>
-                  <head></head>
+                  <head>
+                      <link rel="stylesheet" href="/fixtures/styles-2.css">
+                  </head>
                   <body>
                   <p class="alert">Beware of the zombies</p> 
-                  <script type="module">
-                      console.log("bedfore.s..")
+                  <script defer>
+                      console.log("before")
                   </script>
+                  <script src="/script.js"></script>
+                  <script src="/later/lol.js"></script>
                   </body>
               </html>
+      - path: /script.js
+        content:
+          type: Raw
+          raw:
+            type: Js
+            js: console.log('script.js')
+      - path: /later/*.js
+        content:
+          type: Raw
+          raw:
+            type: Js
+            js: console.log('wildcard')
       - path: /styles.css
         content:
           type: Raw

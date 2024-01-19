@@ -1,5 +1,6 @@
 mod fs_watcher;
 mod input;
+mod panic_handler;
 mod server_actor;
 mod server_config;
 mod server_handlers;

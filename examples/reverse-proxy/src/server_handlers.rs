@@ -1,6 +1,7 @@
+use crate::panic_handler::handle_panic;
 use crate::server_actor::AppState;
 use crate::server_config::{Content, RawContent};
-use axum::extract::{Request, State};
+use axum::extract::{Query, Request, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderValue, StatusCode, Uri};
 use axum::middleware::{from_fn_with_state, Next};
@@ -9,8 +10,10 @@ use axum::routing::{any, any_service, MethodRouter};
 use axum::{http, Router};
 use std::sync::Arc;
 use tower::{Service, ServiceBuilder, ServiceExt};
+use tower_http::catch_panic::{CatchPanic, CatchPanicLayer};
 use tower_http::compression::CompressionLayer;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
+use tower_http::CompressionLevel;
 
 pub fn built_ins(state: Arc<AppState>) -> Router {
     async fn handler(State(app): State<Arc<AppState>>, uri: Uri) -> impl IntoResponse {
@@ -30,8 +33,8 @@ pub fn dynamic_loaders(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", any(never))
         .layer(from_fn_with_state(state.clone(), serve_dir_loader))
-        // .layer(CompressionLayer::new())
         .layer(from_fn_with_state(state.clone(), raw_loader))
+        .layer(CatchPanicLayer::custom(handle_panic))
         .with_state(state.clone())
 }
 
@@ -43,20 +46,61 @@ async fn never(State(app): State<Arc<AppState>>, req: Request) -> impl IntoRespo
     )
 }
 
-async fn serve_dir_loader(State(app): State<Arc<AppState>>, req: Request, next: Next) -> Response {
+#[derive(serde::Deserialize, Debug)]
+struct P {
+    pub encoding: Option<Encoding>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+pub enum Encoding {
+    Br,
+    Zip,
+}
+
+async fn serve_dir_loader(
+    State(app): State<Arc<AppState>>,
+    query: Query<P>,
+    req: Request,
+    next: Next,
+) -> Response {
     tracing::trace!("  -> serve_dir_loader {}", req.uri().path());
+    tracing::trace!("  -> serve_dir_loader {:?}", query);
 
     let bindings = app.dir_bindings.lock().await;
     let mut app = Router::new();
 
     for (num, (k, v)) in bindings.iter().enumerate() {
-        app = app.nest_service(k, any_service(ServeDir::new(v)));
+        let r1 = Router::new().nest_service(k, ServeDir::new(v));
+        if k == "/here" || k == "/a-file-2" {
+            app = app.merge(r1.layer(CompressionLayer::new()));
+        } else {
+            app = app.merge(r1);
+        }
     }
 
-    let r = app.oneshot(req).await.unwrap();
-    let r = r.into_response();
-    tracing::trace!("  <- serve_dir_loader");
-    return r;
+    // if let Some(Encoding::Br) = &query.encoding {
+    //     app = app.layer(CompressionLayer::new().br(true).no_gzip());
+    // }
+    //
+    // if let Some(Encoding::Zip) = &query.encoding {
+    //     app = app.layer(CompressionLayer::new().no_br().gzip(true));
+    // }
+
+    match app.oneshot(req).await {
+        Ok(r) => {
+            let r = r.into_response();
+            tracing::trace!("  <- serve_dir_loader");
+            return r;
+        }
+        Err(e) => {
+            let response = (
+                http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("unreachable {:?}", e),
+            )
+                .into_response();
+            response
+        }
+    }
 }
 
 async fn raw_loader(
