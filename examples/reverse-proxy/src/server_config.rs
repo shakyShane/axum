@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct ServerConfig {
     pub bind_address: String,
@@ -8,22 +6,9 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct Route {
-    pub path: PathBuf,
-    pub content: Content,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-#[serde(tag = "type")]
-pub enum Content {
-    Raw { raw: RawContent },
-    Dir { dir: String },
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-#[serde(tag = "type")]
-pub enum RawContent {
-    Html { html: String },
-    Css { css: String },
-    Js { js: String },
+#[serde(untagged)]
+pub enum Route {
+    Raw { path: String, raw: String },
+    Dir { path: String, dir: String },
+    Html { path: String, html: String },
 }

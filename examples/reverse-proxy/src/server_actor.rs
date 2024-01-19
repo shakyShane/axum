@@ -1,13 +1,10 @@
-use crate::server_config::{Content, RawContent, Route, ServerConfig};
+use crate::server_config::{Route, ServerConfig};
 use crate::server_handlers::{built_ins, dynamic_loaders};
 use crate::server_signals::ServerSignals;
-use crate::server_updates::{Patch, PatchOne};
+use crate::server_updates::PatchOne;
 use actix::{ActorContext, AsyncContext, Running};
 use actix_rt::Arbiter;
 use anyhow::anyhow;
-use axum::extract::{Request, State};
-use axum::http::{HeaderValue, StatusCode, Uri};
-use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
 use axum::Router;
 use hyper::header::CONTENT_TYPE;
@@ -18,7 +15,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender, Mutex};
 use tower::{Service, ServiceExt};
-use tower_http::services::ServeDir;
 
 pub struct ServerActor {
     pub config: ServerConfig,
@@ -49,7 +45,7 @@ impl ServerActor {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub routes: Arc<Mutex<matchit::Router<Content>>>,
+    pub routes: Arc<Mutex<matchit::Router<Route>>>,
     pub dir_bindings: Arc<Mutex<HashMap<String, String>>>,
 }
 
@@ -107,36 +103,6 @@ impl actix::Actor for ServerActor {
     }
 }
 
-async fn get_dyn(State(app): State<Arc<AppState>>, uri: Uri, req: Request) -> impl IntoResponse {
-    tracing::trace!("get_dyn handler incoming, uri={:?}", uri);
-    let v = app.routes.lock().await;
-    let matched = v.at(uri.path());
-
-    let Ok(matched) = matched else {
-        return (StatusCode::NOT_FOUND, "not_found").into_response();
-    };
-
-    let content = matched.value;
-    let params = matched.params;
-
-    for (key, value) in params.iter() {
-        println!("{}={}", key, value);
-    }
-
-    match content {
-        Content::Raw {
-            raw: RawContent::Html { html },
-        } => Html(html.clone()).into_response(),
-        Content::Raw {
-            raw: RawContent::Css { css },
-        } => text_asset_response(uri.path(), css),
-        Content::Raw {
-            raw: RawContent::Js { js },
-        } => text_asset_response(uri.path(), js),
-        Content::Dir { .. } => "{}".into_response(),
-    }
-}
-
 fn text_asset_response(path: &str, css: &str) -> Response {
     let mime = mime_guess::from_path(path);
     let aas_str = mime.first_or_text_plain();
@@ -189,31 +155,25 @@ impl actix::Handler<PatchOne> for ServerActor {
         let routes = msg.server_config.routes.clone();
         let update_dn = async move {
             let mut router = s_c.routes.lock().await;
-            for route in routes {
-                match route.content {
-                    Content::Raw { .. } => {
-                        let path = route.path.to_str().unwrap();
-                        let existing = router.at_mut(path);
+            for route in &routes {
+                match route {
+                    Route::Raw { path, .. } | Route::Html { path, .. } => {
+                        let existing = router.at_mut(path.as_str());
                         if let Ok(mut prev) = existing {
-                            *prev.value = route.content;
+                            *prev.value = route.clone();
                             tracing::trace!(" └ updated mutable route at {}", path)
                         } else if let Err(err) = existing {
-                            match router.insert(path, route.content.clone()) {
+                            match router.insert(path, route.clone()) {
                                 Ok(_) => {
-                                    tracing::trace!(
-                                        "  └ inserted {} with {:?}",
-                                        path,
-                                        route.content
-                                    )
+                                    tracing::trace!("  └ inserted {} with {:?}", path, route)
                                 }
                                 Err(_) => {
                                     tracing::error!("  └ could not insert {:?}", err.to_string())
                                 }
-                            };
+                            }
                         }
                     }
-                    Content::Dir { dir } => {
-                        let path = route.path.to_str().unwrap();
+                    Route::Dir { path, dir } => {
                         let mut dir_bindings = s_c.dir_bindings.lock().await;
                         dir_bindings.insert(path.to_owned(), dir.clone());
                         tracing::trace!(" └ updated dir_bindings at {} with {}", path, dir.clone());

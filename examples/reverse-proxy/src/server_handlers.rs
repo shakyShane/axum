@@ -1,6 +1,6 @@
 use crate::panic_handler::handle_panic;
 use crate::server_actor::AppState;
-use crate::server_config::{Content, RawContent};
+use crate::server_config::Route;
 use axum::extract::{Query, Request, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderValue, StatusCode, Uri};
@@ -117,7 +117,7 @@ async fn raw_loader(
         let Ok(matched) = matched else {
             drop(v);
             let r = next.run(req).await;
-            println!("<- raw_loader");
+            tracing::trace!("<- raw_loader.next");
             return r;
         };
 
@@ -129,34 +129,23 @@ async fn raw_loader(
         }
 
         match content {
-            Content::Raw {
-                raw: RawContent::Html { html },
-            } => {
-                tracing::trace!("-> served HTML");
+            Route::Raw { path, raw } => {
+                tracing::trace!("-> served Route::Raw {} {}bytes", path, raw.len());
+                return text_asset_response(req.uri().path(), raw);
+            }
+            Route::Html { path, html } => {
+                tracing::trace!("-> served Route::Html {} {}bytes", path, html.len());
                 return Html(html.clone()).into_response();
             }
-            Content::Raw {
-                raw: RawContent::Css { css },
-            } => {
-                tracing::trace!("-> served css");
-                return text_asset_response(req.uri().path(), css);
-            }
-            Content::Raw {
-                raw: RawContent::Js { js },
-            } => {
-                tracing::trace!("-> served js");
-                return text_asset_response(req.uri().path(), js);
-            }
-            Content::Dir { dir } => {
-                // tracing::trace!("-> ignoring a Dir match {}", dir);
-                // nothing...
+            Route::Dir { .. } => {
+                // deliberate fall through
             }
         }
     }
 
-    let r = next.run(req).await;
-    println!("<- raw_loader");
-    r
+    let response = next.run(req).await;
+    tracing::trace!("<- raw_loader.next");
+    response
 }
 
 fn text_asset_response(path: &str, css: &str) -> Response {

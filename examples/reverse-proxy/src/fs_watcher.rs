@@ -47,11 +47,7 @@ impl Actor for FsWatcher {
                             DataChange::Any => {}
                             DataChange::Size => {}
                             DataChange::Content => {
-                                tracing::debug!(
-                                    "responding to {:?}, {:?}",
-                                    event.kind,
-                                    event.paths
-                                );
+                                tracing::debug!("{:?}, {:?}", event.kind, event.paths);
                                 self_address.do_send(FsWatchEvent {
                                     absolute_path: event.paths.get(0).unwrap().into(),
                                 })

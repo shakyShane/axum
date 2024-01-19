@@ -1,10 +1,10 @@
-use crate::server_config::{Content, RawContent, Route, ServerConfig};
+use crate::server_config::{Route, ServerConfig};
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct Input {
-    pub servers: Vec<crate::server_config::ServerConfig>,
+    pub servers: Vec<ServerConfig>,
 }
 
 impl Input {
@@ -20,6 +20,36 @@ fn test_deserialize() {
     let input = include_str!("../fixtures/input.yml");
     let _: Input = serde_yaml::from_str(input).unwrap();
 }
+
+#[test]
+fn test_deserialize_2() {
+    #[derive(serde::Deserialize, serde::Serialize, Debug)]
+    struct Config {
+        pub items: Vec<Item>,
+    }
+
+    #[derive(serde::Deserialize, serde::Serialize, Debug)]
+    #[serde(untagged)]
+    enum Item {
+        Raw { path: String, raw: String },
+        Dir { path: String, dir: String },
+        Html { path: String, html: String },
+    }
+
+    let input = r#"
+items:
+  - path: /hello.js
+    raw: "hello"
+  - path: /node_modules
+    dir: ./node_modules
+  - path: /node_modules
+    dir: ./node_modules
+        
+    "#;
+    let c: Config = serde_yaml::from_str(input).unwrap();
+    dbg!(c);
+}
+
 #[test]
 fn test_serialize() {
     let input = Input {
