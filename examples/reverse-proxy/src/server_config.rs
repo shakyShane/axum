@@ -6,22 +6,35 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct Route {
+    pub path: String,
+    #[serde(flatten)]
+    pub opts: Option<Opts>,
+    #[serde(flatten)]
+    pub kind: RouteKind,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(untagged)]
-pub enum Route {
-    Raw {
-        path: String,
-        raw: String,
-    },
-    Dir {
-        path: String,
-        dir: String,
-    },
-    Html {
-        path: String,
-        html: String,
-    },
-    Json {
-        path: String,
-        json: serde_json::Value,
-    },
+pub enum RouteKind {
+    Html { html: String },
+    Json { json: serde_json::Value },
+    Raw { raw: String },
+    Dir(DirRoute),
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct DirRoute {
+    pub dir: String,
+}
+
+impl Route {
+    pub fn path(&self) -> &str {
+        self.path.as_str()
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct Opts {
+    pub cors: bool,
 }

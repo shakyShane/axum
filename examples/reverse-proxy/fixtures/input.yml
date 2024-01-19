@@ -3,6 +3,7 @@ servers:
     routes:
       - path: /
         dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/api
+        cors: true
   - bind_address: 127.0.0.1:3000
     routes:
       - path: /
@@ -20,6 +21,7 @@ servers:
                       .catch(console.log)
               </script>
               <script src="/script.js"></script>
+              <script src="/a-file-2"></script>
               <script src="/script.js"></script>
               <script src="/later/lol.js"></script>
               </body>

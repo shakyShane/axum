@@ -1,6 +1,6 @@
 use crate::panic_handler::handle_panic;
 use crate::server_actor::AppState;
-use crate::server_config::Route;
+use crate::server_config::{DirRoute, RouteKind};
 use axum::extract::{Query, Request, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::Uri;
@@ -9,9 +9,9 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{any, MethodRouter};
 use axum::{http, Json, Router};
 use std::sync::Arc;
-use tower::ServiceExt;
+use tower::{ServiceBuilder, ServiceExt};
 use tower_http::catch_panic::CatchPanicLayer;
-use tower_http::compression::CompressionLayer;
+
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
@@ -30,11 +30,14 @@ fn route(path: &str, method_router: MethodRouter<Arc<AppState>>) -> Router<Arc<A
 }
 
 pub fn dynamic_loaders(state: Arc<AppState>) -> Router {
-    use tower_http::cors::{Any, CorsLayer};
     Router::new()
         .route("/", any(never))
-        .layer(from_fn_with_state(state.clone(), serve_dir_loader))
-        .layer(from_fn_with_state(state.clone(), raw_loader))
+        .layer(
+            ServiceBuilder::new()
+                .layer(from_fn_with_state(state.clone(), raw_loader))
+                .layer(from_fn_with_state(state.clone(), raw_loader_2))
+                .layer(from_fn_with_state(state.clone(), serve_dir_loader)),
+        )
         .layer(CatchPanicLayer::custom(handle_panic))
         // .layer(
         //     CorsLayer::new()
@@ -76,11 +79,20 @@ async fn serve_dir_loader(
     let bindings = app.dir_bindings.lock().await;
     let mut app = Router::new();
 
-    for (k, v) in bindings.iter() {
-        let r1 = Router::new().nest_service(k, ServeDir::new(v));
-        if k == "/here" || k == "/a-file-2" {
-            app = app.merge(r1.layer(CompressionLayer::new()));
-        } else {
+    for (path, v) in bindings.iter() {
+        if let RouteKind::Dir(DirRoute { dir }) = &v.kind {
+            let mut r1 = Router::new().nest_service(path, ServeDir::new(dir));
+
+            if v.opts.as_ref().is_some_and(|v| v.cors) {
+                r1 = r1.layer(CorsLayer::new().allow_origin(Any).allow_methods(Any));
+            }
+
+            // if path == "/here" || path == "/a-file-2" {
+            //     app = app.merge(r1.layer(CompressionLayer::new()));
+            // } else {
+            //     app = app.merge(r1);
+            // }
+
             app = app.merge(r1);
         }
     }
@@ -134,27 +146,57 @@ async fn raw_loader(
             tracing::trace!("-> {}={}", key, value);
         }
 
-        match content {
-            Route::Raw { path, raw } => {
-                tracing::trace!("-> served Route::Raw {} {}bytes", path, raw.len());
+        match &content.kind {
+            // Route::Raw { path, raw, .. } => {
+            //     tracing::trace!("-> served Route::Raw {} {} bytes", path, raw.len());
+            //     return text_asset_response(req.uri().path(), raw);
+            // }
+            // Route::Html { path, html, .. } => {
+            //     tracing::trace!("-> served Route::Html {} {} bytes", path, html.len());
+            //     return Html(html.clone()).into_response();
+            // }
+            // Route::Dir { .. } => {
+            //     // deliberate fall through
+            // }
+            // Route::Json { json, path, .. } => {
+            //     tracing::trace!("-> served Route::Json {} {}", path, json);
+            //     return Json(json).into_response();
+            // }
+            RouteKind::Raw { raw } => {
+                tracing::trace!("-> served Route::Raw {} {} bytes", content.path, raw.len());
                 return text_asset_response(req.uri().path(), raw);
             }
-            Route::Html { path, html } => {
-                tracing::trace!("-> served Route::Html {} {}bytes", path, html.len());
+            RouteKind::Html { html } => {
+                tracing::trace!(
+                    "-> served Route::Html {} {} bytes",
+                    content.path,
+                    html.len()
+                );
                 return Html(html.clone()).into_response();
             }
-            Route::Dir { .. } => {
-                // deliberate fall through
-            }
-            Route::Json { json, path } => {
-                tracing::trace!("-> served Route::Json {} {}bytes", path, json);
+            RouteKind::Json { json } => {
+                tracing::trace!("-> served Route::Json {} {}", content.path, json);
                 return Json(json).into_response();
+            }
+            RouteKind::Dir(_) => {
+                // deliberate fall through
             }
         }
     }
 
     let response = next.run(req).await;
     tracing::trace!("<- raw_loader.next");
+    response
+}
+
+async fn raw_loader_2(
+    State(_app): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> impl IntoResponse {
+    tracing::trace!(" -> raw_loader 2");
+    let response = next.run(req).await;
+    tracing::trace!(" <- raw_loader 2.next");
     response
 }
 

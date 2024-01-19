@@ -1,4 +1,4 @@
-use crate::server_config::{Route, ServerConfig};
+use crate::server_config::{DirRoute, Route, RouteKind, ServerConfig};
 use crate::server_handlers::{built_ins, dynamic_loaders};
 use crate::server_signals::ServerSignals;
 use crate::server_updates::PatchOne;
@@ -13,6 +13,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender, Mutex};
+use tower_http::trace::TraceLayer;
 
 pub struct ServerActor {
     pub config: ServerConfig,
@@ -44,7 +45,7 @@ impl ServerActor {
 #[derive(Clone)]
 pub struct AppState {
     pub routes: Arc<Mutex<matchit::Router<Route>>>,
-    pub dir_bindings: Arc<Mutex<HashMap<String, String>>>,
+    pub dir_bindings: Arc<Mutex<HashMap<String, Route>>>,
 }
 
 impl actix::Actor for ServerActor {
@@ -72,7 +73,7 @@ impl actix::Actor for ServerActor {
             let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
             tracing::debug!("axum: listening on {}", listener.local_addr().unwrap());
 
-            match axum::serve(listener, router)
+            match axum::serve(listener, router.layer(TraceLayer::new_for_http()))
                 .with_graceful_shutdown(async { received_stop.await.unwrap() })
                 .await
             {
@@ -153,12 +154,11 @@ impl actix::Handler<PatchOne> for ServerActor {
         let routes = msg.server_config.routes.clone();
         let update_dn = async move {
             let mut router = s_c.routes.lock().await;
-            for route in &routes {
-                match route {
-                    Route::Raw { path, .. }
-                    | Route::Html { path, .. }
-                    | Route::Json { path, .. } => {
-                        let existing = router.at_mut(path.as_str());
+            for route in routes {
+                let path = route.path();
+                match &route.kind {
+                    RouteKind::Html { .. } | RouteKind::Json { .. } | RouteKind::Raw { .. } => {
+                        let existing = router.at_mut(path);
                         if let Ok(prev) = existing {
                             *prev.value = route.clone();
                             tracing::trace!(" └ updated mutable route at {}", path)
@@ -173,9 +173,9 @@ impl actix::Handler<PatchOne> for ServerActor {
                             }
                         }
                     }
-                    Route::Dir { path, dir } => {
+                    RouteKind::Dir(DirRoute { dir }) => {
                         let mut dir_bindings = s_c.dir_bindings.lock().await;
-                        dir_bindings.insert(path.to_owned(), dir.clone());
+                        dir_bindings.insert(path.to_owned(), route.clone());
                         tracing::trace!(" └ updated dir_bindings at {} with {}", path, dir.clone());
                         drop(dir_bindings);
                     }

@@ -75,7 +75,7 @@ fn main() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "example_reverse_proxy=debug,tower_http=debug".into()),
+                .unwrap_or_else(|_| "example_reverse_proxy=trace,tower_http=debug".into()),
         )
         .with(fmt_layer)
         .init();

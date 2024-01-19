@@ -1,4 +1,4 @@
-use crate::server_config::{Route, ServerConfig};
+use crate::server_config::ServerConfig;
 use std::fs::read_to_string;
 use std::path::Path;
 
@@ -25,13 +25,14 @@ fn test_deserialize() {
 fn test_deserialize_2() {
     #[derive(serde::Deserialize, serde::Serialize, Debug)]
     struct Config {
-        pub items: Vec<Route>,
+        pub items: Vec<crate::server_config::Route>,
     }
 
     let input = r#"
 items:
   - path: /hello.js
     raw: "hello"
+    cors: true
   - path: /hello.js
     json: ["2", "3"]
   - path: /node_modules
@@ -45,17 +46,13 @@ items:
 }
 
 #[test]
-fn test_serialize() {
-    use crate::server_config::{Route, ServerConfig};
-    let input = Input {
-        servers: vec![ServerConfig {
-            bind_address: "127.0.0.1".to_string(),
-            routes: vec![Route::Dir {
-                path: "/assets".into(),
-                dir: "assets".into(),
-            }],
-        }],
-    };
-    let yaml = serde_yaml::to_string(&input).unwrap();
-    println!("{}", yaml);
+fn test_deserialize_3() {
+    use crate::server_config::Route;
+    let input = r#"
+path: /hello.js
+dir: "hello"
+cors: true
+    "#;
+    let c: Route = serde_yaml::from_str(input).unwrap();
+    dbg!(c);
 }
