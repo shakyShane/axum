@@ -3,17 +3,16 @@ use crate::server_actor::AppState;
 use crate::server_config::Route;
 use axum::extract::{Query, Request, State};
 use axum::http::header::CONTENT_TYPE;
-use axum::http::{HeaderValue, StatusCode, Uri};
+use axum::http::Uri;
 use axum::middleware::{from_fn_with_state, Next};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{any, any_service, MethodRouter};
+use axum::routing::{any, MethodRouter};
 use axum::{http, Router};
 use std::sync::Arc;
-use tower::{Service, ServiceBuilder, ServiceExt};
-use tower_http::catch_panic::{CatchPanic, CatchPanicLayer};
+use tower::ServiceExt;
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::compression::CompressionLayer;
-use tower_http::services::{ServeDir, ServeFile};
-use tower_http::CompressionLevel;
+use tower_http::services::ServeDir;
 
 pub fn built_ins(state: Arc<AppState>) -> Router {
     async fn handler(State(app): State<Arc<AppState>>, uri: Uri) -> impl IntoResponse {
@@ -38,7 +37,7 @@ pub fn dynamic_loaders(state: Arc<AppState>) -> Router {
         .with_state(state.clone())
 }
 
-async fn never(State(app): State<Arc<AppState>>, req: Request) -> impl IntoResponse {
+async fn never(State(_app): State<Arc<AppState>>, req: Request) -> impl IntoResponse {
     println!("    -> never");
     (
         http::StatusCode::NOT_FOUND,
@@ -61,7 +60,7 @@ async fn serve_dir_loader(
     State(app): State<Arc<AppState>>,
     query: Query<P>,
     req: Request,
-    next: Next,
+    _next: Next,
 ) -> Response {
     tracing::trace!("  -> serve_dir_loader {}", req.uri().path());
     tracing::trace!("  -> serve_dir_loader {:?}", query);
@@ -69,7 +68,7 @@ async fn serve_dir_loader(
     let bindings = app.dir_bindings.lock().await;
     let mut app = Router::new();
 
-    for (num, (k, v)) in bindings.iter().enumerate() {
+    for (k, v) in bindings.iter() {
         let r1 = Router::new().nest_service(k, ServeDir::new(v));
         if k == "/here" || k == "/a-file-2" {
             app = app.merge(r1.layer(CompressionLayer::new()));
@@ -78,28 +77,27 @@ async fn serve_dir_loader(
         }
     }
 
-    // if let Some(Encoding::Br) = &query.encoding {
-    //     app = app.layer(CompressionLayer::new().br(true).no_gzip());
-    // }
-    //
-    // if let Some(Encoding::Zip) = &query.encoding {
-    //     app = app.layer(CompressionLayer::new().no_br().gzip(true));
-    // }
+    if let Some(Encoding::Br) = &query.encoding {
+        todo!("implement Encoding::Br");
+        // app = app.layer(CompressionLayer::new().br(true).no_gzip());
+    }
+
+    if let Some(Encoding::Zip) = &query.encoding {
+        // app = app.layer(CompressionLayer::new().no_br().gzip(true));
+        todo!("implement Encoding::Zip");
+    }
 
     match app.oneshot(req).await {
         Ok(r) => {
             let r = r.into_response();
             tracing::trace!("  <- serve_dir_loader");
-            return r;
+            r
         }
-        Err(e) => {
-            let response = (
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("unreachable {:?}", e),
-            )
-                .into_response();
-            response
-        }
+        Err(e) => (
+            http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("unreachable {:?}", e),
+        )
+            .into_response(),
     }
 }
 

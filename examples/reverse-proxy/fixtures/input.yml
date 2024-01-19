@@ -2,89 +2,56 @@ servers:
   - bind_address: 127.0.0.1:3000
     routes:
       - path: /
-        content:
-          type: Dir
-          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy
+        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy
       - path: /here
-        content:
-          type: Dir
-          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures
+        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures
       - path: /a-file
-        content:
-          type: Dir
-          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/app.js
+        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/app.js
       - path: /a-file-2
-        content:
-          type: Dir
-          dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/app.js
+        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/app.js
       - path: /
-        content:
-          type: Raw
-          raw:
-            type: Html
-            html: |
-              <html>
-                  <head>
-                      <link rel="stylesheet" href="/fixtures/styles-2.css">
-                  </head>
-                  <body>
-                  <p class="alert">Beware of the zombies</p> 
-                  <script defer>
-                      console.log("before")
-                  </script>
-                  <script src="/script.js"></script>
-                  <script src="/later/lol.js"></script>
-                  </body>
-              </html>
+        html: |
+          <html>
+              <head>
+                  <link rel="stylesheet" href="/fixtures/styles-2.css">
+              </head>
+              <body>
+              <p class="alert">Beware of the zombies</p> 
+              <script defer>
+                  console.log("before")
+              </script>
+              <script src="/script.js"></script>
+              <script src="/later/lol.js"></script>
+              </body>
+          </html>
       - path: /script.js
-        content:
-          type: Raw
-          raw:
-            type: Js
-            js: console.log('script.js')
+        raw: console.log('script.js')
       - path: /later/*.js
-        content:
-          type: Raw
-          raw:
-            type: Js
-            js: console.log('wildcard')
+        raw: console.log('wildcard')
       - path: /styles.css
-        content:
-          type: Raw
-          raw:
-            type: Css
-            css: |
-              @layer state, module;
-              
-              @layer state {
-                  .alert {
-                      background-color: brown;
-                  }
-                  p {
-                      border: medium solid limegreen;
-                  }
+        raw: |
+          @layer state, module;
+          
+          @layer state {
+              .alert {
+                  background-color: brown;
               }
-              
-              @layer module {
-                  .alert {
-                      border: medium solid violet;
-                      background-color: yellow;
-                      color: white;
-                  }
+              p {
+                  border: medium solid limegreen;
               }
+          }
+          
+          @layer module {
+              .alert {
+                  border: medium solid violet;
+                  background-color: yellow;
+                  color: white;
+              }
+          }
 
   - bind_address: 127.0.0.1:3001
     routes:
       - path: "/"
-        content:
-          type: Raw
-          raw:
-            type: Html
-            html: hey!
+        html: hey!
       - path: /script.js
-        content:
-          type: Raw
-          raw:
-            type: Js
-            js: |
-              console.log(location.href)
+        raw: console.log(location.href)

@@ -1,6 +1,6 @@
-use crate::server_config::{Route, ServerConfig};
+use crate::server_config::ServerConfig;
 use std::fs::read_to_string;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct Input {
@@ -52,25 +52,14 @@ items:
 
 #[test]
 fn test_serialize() {
+    use crate::server_config::{Route, ServerConfig};
     let input = Input {
         servers: vec![ServerConfig {
             bind_address: "127.0.0.1".to_string(),
-            routes: vec![
-                Route {
-                    path: PathBuf::from("/assets"),
-                    content: Content::Dir {
-                        dir: "assets".into(),
-                    },
-                },
-                Route {
-                    path: PathBuf::from("/"),
-                    content: Content::Raw {
-                        raw: RawContent::Html {
-                            html: "html content".into(),
-                        },
-                    },
-                },
-            ],
+            routes: vec![Route::Dir {
+                path: "/assets".into(),
+                dir: "assets".into(),
+            }],
         }],
     };
     let yaml = serde_yaml::to_string(&input).unwrap();

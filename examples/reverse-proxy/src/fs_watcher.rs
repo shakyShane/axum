@@ -1,6 +1,6 @@
 use actix::{Actor, AsyncContext, Handler, Recipient};
 use notify::event::{DataChange, ModifyKind};
-use notify::{ErrorKind, EventKind, RecursiveMode, Watcher};
+use notify::{EventKind, RecursiveMode, Watcher};
 use std::path::PathBuf;
 
 pub struct FsWatcher {
@@ -35,7 +35,7 @@ impl Actor for FsWatcher {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         let self_address = ctx.address();
-        if let Ok(mut watcher) =
+        if let Ok(watcher) =
             notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
                 Ok(event) => match event.kind {
                     EventKind::Any => {}
@@ -49,7 +49,7 @@ impl Actor for FsWatcher {
                             DataChange::Content => {
                                 tracing::debug!("{:?}, {:?}", event.kind, event.paths);
                                 self_address.do_send(FsWatchEvent {
-                                    absolute_path: event.paths.get(0).unwrap().into(),
+                                    absolute_path: event.paths.first().unwrap().into(),
                                 })
                             }
                             DataChange::Other => {}
@@ -74,7 +74,7 @@ impl Actor for FsWatcher {
 
 impl Handler<FsWatchEvent> for FsWatcher {
     type Result = ();
-    fn handle(&mut self, msg: FsWatchEvent, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: FsWatchEvent, _ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!("FsWatchEvent for FsWatcher");
         tracing::trace!("  └ sending to {} receivers", self.receivers.len());
         for x in &self.receivers {
@@ -94,7 +94,7 @@ pub enum FsWatchError {
 impl Handler<WatchPath> for FsWatcher {
     type Result = Result<(), FsWatchError>;
 
-    fn handle(&mut self, msg: WatchPath, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: WatchPath, _ctx: &mut Self::Context) -> Self::Result {
         if let Some(watcher) = self.watcher.as_mut() {
             match watcher.watch(&msg.path, RecursiveMode::NonRecursive) {
                 Ok(_) => {

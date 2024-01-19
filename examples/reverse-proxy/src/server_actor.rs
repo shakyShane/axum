@@ -2,19 +2,18 @@ use crate::server_config::{Route, ServerConfig};
 use crate::server_handlers::{built_ins, dynamic_loaders};
 use crate::server_signals::ServerSignals;
 use crate::server_updates::PatchOne;
-use actix::{ActorContext, AsyncContext, Running};
+use actix::{ActorContext, Running};
 use actix_rt::Arbiter;
 use anyhow::anyhow;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use axum::Router;
 use hyper::header::CONTENT_TYPE;
 use std::collections::HashMap;
 use std::future::Future;
-use std::hash::Hash;
+
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender, Mutex};
-use tower::{Service, ServiceExt};
 
 pub struct ServerActor {
     pub config: ServerConfig,
@@ -52,7 +51,7 @@ pub struct AppState {
 impl actix::Actor for ServerActor {
     type Context = actix::Context<Self>;
 
-    fn started(&mut self, ctx: &mut Self::Context) {
+    fn started(&mut self, _ctx: &mut Self::Context) {
         let addr = self.config.bind_address.clone();
         let (send_complete, received_stop) = self.install_signals();
 
@@ -80,10 +79,9 @@ impl actix::Actor for ServerActor {
             {
                 Ok(_) => {
                     tracing::debug!("axum: Server all done");
-                    match send_complete.send(()) {
-                        Ok(_) => {}
-                        Err(_) => {}
-                    };
+                    if send_complete.send(()).is_err() {
+                        tracing::error!("axum: could not send complete message");
+                    }
                 }
                 Err(_) => {
                     tracing::error!("axum: Server all done, but error");
@@ -93,16 +91,17 @@ impl actix::Actor for ServerActor {
         Arbiter::current().spawn(server);
     }
 
-    fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
+    fn stopping(&mut self, _ctx: &mut Self::Context) -> Running {
         tracing::debug!("Server stopping (), {}", &self.config.bind_address);
         Running::Stop
     }
 
-    fn stopped(&mut self, ctx: &mut Self::Context) {
+    fn stopped(&mut self, _ctx: &mut Self::Context) {
         tracing::debug!("Server stopped (), {}", &self.config.bind_address);
     }
 }
 
+#[allow(dead_code)]
 fn text_asset_response(path: &str, css: &str) -> Response {
     let mime = mime_guess::from_path(path);
     let aas_str = mime.first_or_text_plain();
@@ -117,7 +116,7 @@ pub struct Stop2;
 impl actix::Handler<Stop2> for ServerActor {
     type Result = Pin<Box<dyn Future<Output = ()>>>;
 
-    fn handle(&mut self, msg: Stop2, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, _msg: Stop2, ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!("actor(Server): Stop2");
         let Some(signals) = self.signals.take() else {
             todo!("how can we get here?")
@@ -145,7 +144,7 @@ impl actix::Handler<Stop2> for ServerActor {
 impl actix::Handler<PatchOne> for ServerActor {
     type Result = anyhow::Result<()>;
 
-    fn handle(&mut self, msg: PatchOne, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: PatchOne, _ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!("Handler<PatchOne> for ServerActor");
         let app_state = self
             .app_state
@@ -159,7 +158,7 @@ impl actix::Handler<PatchOne> for ServerActor {
                 match route {
                     Route::Raw { path, .. } | Route::Html { path, .. } => {
                         let existing = router.at_mut(path.as_str());
-                        if let Ok(mut prev) = existing {
+                        if let Ok(prev) = existing {
                             *prev.value = route.clone();
                             tracing::trace!(" └ updated mutable route at {}", path)
                         } else if let Err(err) = existing {

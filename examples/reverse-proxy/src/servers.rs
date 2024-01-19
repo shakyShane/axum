@@ -6,7 +6,7 @@ use crate::server_updates::{Patch, PatchOne};
 use crate::{server_actor, ServerHandler};
 use actix::Actor;
 use futures::future::join_all;
-use std::fs::read_to_string;
+
 use std::future::Future;
 use std::pin::Pin;
 
@@ -23,7 +23,7 @@ impl Servers {
 
 impl Actor for Servers {
     type Context = actix::Context<Self>;
-    fn started(&mut self, ctx: &mut Self::Context) {}
+    fn started(&mut self, _ctx: &mut Self::Context) {}
 }
 
 #[derive(actix::Message)]
@@ -35,7 +35,7 @@ pub struct StartMessage {
 impl actix::Handler<StartMessage> for Servers {
     type Result = ();
 
-    fn handle(&mut self, msg: StartMessage, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: StartMessage, _ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!("creating server actors {:?}", msg.server_configs);
 
         let server_handlers = msg
@@ -62,7 +62,7 @@ pub struct StopMsg;
 impl actix::Handler<StopMsg> for Servers {
     type Result = Pin<Box<dyn Future<Output = ()>>>;
 
-    fn handle(&mut self, msg: StopMsg, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, _msg: StopMsg, _ctx: &mut Self::Context) -> Self::Result {
         let aaddresses = self.handlers.clone();
 
         Box::pin(async move {
@@ -80,7 +80,7 @@ impl actix::Handler<FsWatchEvent> for Servers {
     type Result = ();
 
     /// todo: accept more messages here
-    fn handle(&mut self, msg: FsWatchEvent, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: FsWatchEvent, _ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!("FsWatchEvent for Servers");
         tracing::trace!("  └ {:?}", msg.absolute_path);
         let is_input = true;
@@ -117,7 +117,7 @@ impl actix::Handler<FsWatchEvent> for Servers {
 impl actix::Handler<Patch> for Servers {
     type Result = ();
 
-    fn handle(&mut self, msg: Patch, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: Patch, _ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!("Handler<Patch> for Servers");
         tracing::trace!(
             "  └ {} incoming msg.server_configs",

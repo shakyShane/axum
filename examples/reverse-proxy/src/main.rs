@@ -10,13 +10,12 @@ mod servers;
 
 use crate::fs_watcher::FsWatcher;
 use crate::input::Input;
-use crate::server_config::{Route, ServerConfig};
+
 use crate::server_updates::Patch;
 use crate::servers::{Servers, StartMessage};
-use actix::dev::MessageResponse;
+
 use actix::prelude::*;
-use actix::Running::Stop;
-use anyhow::Error;
+
 use axum::body::Bytes;
 use axum::extract::FromRef;
 use axum::http::HeaderValue;
@@ -24,19 +23,18 @@ use axum::middleware::Next;
 use axum::{
     body::Body,
     extract::{Request, State},
-    handler::HandlerWithoutStateExt,
     http::uri::Uri,
     response::{IntoResponse, Response},
 };
 use http_body_util::BodyExt;
 use hyper::StatusCode;
-use hyper_util::{client::legacy::connect::HttpConnector, rt::TokioExecutor};
+use hyper_util::client::legacy::connect::HttpConnector;
 use std::env::current_dir;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::time;
-use tokio::time::{interval, sleep};
-use tracing::instrument::WithSubscriber;
+
+use tokio::time::sleep;
+
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 type Client = hyper_util::client::legacy::Client<HttpConnector, Body>;
@@ -112,7 +110,7 @@ fn main() {
             path: input_path,
         });
 
-        let servers_done = servers_addr
+        let _servers_done = servers_addr
             .send(StartMessage {
                 server_configs: input.servers.clone(),
             })
@@ -207,6 +205,7 @@ fn main() {
     System::current().stop();
 }
 
+#[allow(dead_code)]
 async fn handler(
     State(client): State<Client>,
     State(config): State<Config>,
@@ -242,6 +241,7 @@ async fn handler(
         .into_response())
 }
 
+#[allow(dead_code)]
 async fn print_request_response(
     req: Request,
     next: Next,
@@ -260,6 +260,7 @@ async fn print_request_response(
     Ok(res)
 }
 
+#[allow(dead_code)]
 async fn buffer_and_print<B>(
     direction: &str,
     uri: &str,
