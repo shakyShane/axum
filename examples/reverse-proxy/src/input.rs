@@ -1,4 +1,4 @@
-use crate::server_config::ServerConfig;
+use crate::server_config::{Route, ServerConfig};
 use std::fs::read_to_string;
 use std::path::Path;
 
@@ -25,21 +25,15 @@ fn test_deserialize() {
 fn test_deserialize_2() {
     #[derive(serde::Deserialize, serde::Serialize, Debug)]
     struct Config {
-        pub items: Vec<Item>,
-    }
-
-    #[derive(serde::Deserialize, serde::Serialize, Debug)]
-    #[serde(untagged)]
-    enum Item {
-        Raw { path: String, raw: String },
-        Dir { path: String, dir: String },
-        Html { path: String, html: String },
+        pub items: Vec<Route>,
     }
 
     let input = r#"
 items:
   - path: /hello.js
     raw: "hello"
+  - path: /hello.js
+    json: ["2", "3"]
   - path: /node_modules
     dir: ./node_modules
   - path: /node_modules

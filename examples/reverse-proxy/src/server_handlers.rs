@@ -7,11 +7,12 @@ use axum::http::Uri;
 use axum::middleware::{from_fn_with_state, Next};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{any, MethodRouter};
-use axum::{http, Router};
+use axum::{http, Json, Router};
 use std::sync::Arc;
 use tower::ServiceExt;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::compression::CompressionLayer;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
 pub fn built_ins(state: Arc<AppState>) -> Router {
@@ -29,11 +30,18 @@ fn route(path: &str, method_router: MethodRouter<Arc<AppState>>) -> Router<Arc<A
 }
 
 pub fn dynamic_loaders(state: Arc<AppState>) -> Router {
+    use tower_http::cors::{Any, CorsLayer};
     Router::new()
         .route("/", any(never))
         .layer(from_fn_with_state(state.clone(), serve_dir_loader))
         .layer(from_fn_with_state(state.clone(), raw_loader))
         .layer(CatchPanicLayer::custom(handle_panic))
+        // .layer(
+        //     CorsLayer::new()
+        //         .allow_origin(Any)
+        //         .allow_methods(Any)
+        //         .allow_credentials(true),
+        // )
         .with_state(state.clone())
 }
 
@@ -137,6 +145,10 @@ async fn raw_loader(
             }
             Route::Dir { .. } => {
                 // deliberate fall through
+            }
+            Route::Json { json, path } => {
+                tracing::trace!("-> served Route::Json {} {}bytes", path, json);
+                return Json(json).into_response();
             }
         }
     }

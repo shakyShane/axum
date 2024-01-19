@@ -1,14 +1,10 @@
 servers:
-  - bind_address: 127.0.0.1:3000
+  - bind_address: 127.0.0.1:3002
     routes:
       - path: /
-        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy
-      - path: /here
-        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures
-      - path: /a-file
-        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/app.js
-      - path: /a-file-2
-        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/app.js
+        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/api
+  - bind_address: 127.0.0.1:3000
+    routes:
       - path: /
         html: |
           <html>
@@ -18,12 +14,24 @@ servers:
               <body>
               <p class="alert">Beware of the zombies</p> 
               <script defer>
-                  console.log("before")
+                  fetch("http://localhost:3002/2.json")
+                      .then(x => x.json())
+                      .then(console.log)
+                      .catch(console.log)
               </script>
+              <script src="/script.js"></script>
               <script src="/script.js"></script>
               <script src="/later/lol.js"></script>
               </body>
           </html>
+      - path: /
+        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy
+      - path: /here
+        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures
+      - path: /a-file
+        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/app.js
+      - path: /a-file-2
+        dir: /Users/shaneosbourne/WebstormProjects/axum/examples/reverse-proxy/fixtures/app.js
       - path: /script.js
         raw: console.log('script.js')
       - path: /later/*.js

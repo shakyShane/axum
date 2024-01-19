@@ -10,7 +10,6 @@ use axum::Router;
 use hyper::header::CONTENT_TYPE;
 use std::collections::HashMap;
 use std::future::Future;
-
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender, Mutex};
@@ -156,7 +155,9 @@ impl actix::Handler<PatchOne> for ServerActor {
             let mut router = s_c.routes.lock().await;
             for route in &routes {
                 match route {
-                    Route::Raw { path, .. } | Route::Html { path, .. } => {
+                    Route::Raw { path, .. }
+                    | Route::Html { path, .. }
+                    | Route::Json { path, .. } => {
                         let existing = router.at_mut(path.as_str());
                         if let Ok(prev) = existing {
                             *prev.value = route.clone();
