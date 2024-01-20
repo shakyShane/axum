@@ -9,18 +9,22 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{any, MethodRouter};
 use axum::{http, Json, Router};
 use std::sync::Arc;
+use std::time::Duration;
 use tower::{ServiceBuilder, ServiceExt};
 use tower_http::catch_panic::CatchPanicLayer;
 
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
+use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 pub fn make_router(state: &Arc<AppState>) -> Router {
     let router = Router::new()
         .merge(built_ins(state.clone()))
         .merge(dynamic_loaders(state.clone()));
-    router.layer(TraceLayer::new_for_http())
+    router
+        .layer(TraceLayer::new_for_http())
+        .layer(TimeoutLayer::new(Duration::from_secs(3)))
 }
 
 pub fn built_ins(state: Arc<AppState>) -> Router {
@@ -97,6 +101,8 @@ async fn serve_dir_loader(
         }
     }
 
+    drop(routes);
+
     if let Some(Encoding::Br) = &query.encoding {
         todo!("implement Encoding::Br");
         // app = app.layer(CompressionLayer::new().br(true).no_gzip());
@@ -157,10 +163,10 @@ async fn raw_loader(
             }
         }
 
+        drop(routes);
         let matched = temp_router.at(req.uri().path());
 
         let Ok(matched) = matched else {
-            drop(routes);
             let r = next.run(req).await;
             tracing::trace!("<- raw_loader.next");
             return r;

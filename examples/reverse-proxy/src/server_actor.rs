@@ -9,8 +9,10 @@ use axum::response::{IntoResponse, Response};
 
 use hyper::header::CONTENT_TYPE;
 
+use axum_server::Handle;
 use std::fmt::Formatter;
 use std::future::Future;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender, Mutex};
@@ -29,16 +31,19 @@ impl ServerActor {
             app_state: None,
         }
     }
-    pub fn install_signals(&mut self) -> (Sender<()>, Receiver<()>) {
+    pub fn install_signals(&mut self) -> (Sender<()>, Receiver<()>, Handle) {
         let (stop_server_sender, stop_server_receiver) = oneshot::channel();
         let (shutdown_complete, shutdown_complete_receiver) = oneshot::channel();
+        let handle = Handle::new();
+        let h2 = handle.clone();
 
         self.signals = Some(ServerSignals {
             stop_msg_sender: Some(stop_server_sender),
             complete_mdg_receiver: Some(shutdown_complete_receiver),
+            handle: Some(handle),
         });
 
-        (shutdown_complete, stop_server_receiver)
+        (shutdown_complete, stop_server_receiver, h2)
     }
 }
 
@@ -61,7 +66,7 @@ impl actix::Actor for ServerActor {
 
     fn started(&mut self, _ctx: &mut Self::Context) {
         let addr = self.config.bind_address.clone();
-        let (send_complete, received_stop) = self.install_signals();
+        let (send_complete, received_stop, handle) = self.install_signals();
 
         let app_state = Arc::new(AppState {
             routes: Arc::new(Mutex::new(vec![])),
@@ -71,13 +76,18 @@ impl actix::Actor for ServerActor {
 
         let server = async move {
             let router = make_router(&app_state);
-            let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-            tracing::debug!("axum: listening on {}", listener.local_addr().unwrap());
+            let addr: Result<SocketAddr, _> = addr.parse();
 
-            match axum::serve(listener, router)
-                .with_graceful_shutdown(async { received_stop.await.unwrap() })
-                .await
-            {
+            let Ok(addr) = addr else {
+                tracing::error!("axum: could not parse bind_address");
+                return;
+            };
+
+            let server = axum_server::bind(addr)
+                .handle(handle)
+                .serve(router.into_make_service());
+
+            match server.await {
                 Ok(_) => {
                     tracing::debug!("axum: Server all done");
                     if send_complete.send(()).is_err() {
@@ -111,30 +121,29 @@ fn text_asset_response(path: &str, css: &str) -> Response {
 }
 
 #[derive(actix::Message)]
-#[rtype(result = "()")]
+#[rtype(result = "String")]
 pub struct Stop2;
 
 impl actix::Handler<Stop2> for ServerActor {
-    type Result = Pin<Box<dyn Future<Output = ()>>>;
+    type Result = Pin<Box<dyn Future<Output = String>>>;
 
     fn handle(&mut self, _msg: Stop2, ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!("actor(Server): Stop2");
+        ctx.stop();
+        // don't accept any more messages
         let Some(signals) = self.signals.take() else {
-            todo!("how can we get here?")
+            todo!("should be unreachable. close signal can only be sent once")
         };
-        if let Some(stop_msg_sender) = signals.stop_msg_sender {
-            tracing::trace!("actor(Server): state when trying to stop {:?}", ctx.state());
-            match stop_msg_sender.send(()) {
-                Ok(_) => tracing::trace!("actor(Server): sending signal to shutdown"),
-                Err(_) => tracing::error!("actor(Server): could not send signal"),
-            }
-        } else {
-            tracing::error!("actor(Server): could not take sender");
-            todo!("cannot get here?")
+        if let Some(handle) = signals.handle {
+            tracing::trace!("actor(Server): shutting down...");
+            handle.shutdown();
         }
         if let Some(complete_msg_receiver) = signals.complete_mdg_receiver {
-            Box::pin(async {
+            tracing::debug!("actor(Server): confirmed closed!");
+            let bind_address = self.config.bind_address.clone();
+            Box::pin(async move {
                 complete_msg_receiver.await.unwrap();
+                bind_address
             })
         } else {
             todo!("cannot get here?")

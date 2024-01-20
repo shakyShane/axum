@@ -4,9 +4,10 @@ use crate::server_actor::Stop2;
 use crate::server_config::ServerConfig;
 use crate::server_updates::{Patch, PatchOne};
 use crate::{server_actor, ServerHandler};
-use actix::Actor;
+use actix::{Actor, AsyncContext, MailboxError};
 use futures::future::join_all;
 
+use actix_rt::Arbiter;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -57,6 +58,28 @@ impl actix::Handler<StartMessage> for Servers {
 
 #[derive(actix::Message)]
 #[rtype(result = "()")]
+pub struct Stopped {
+    pub bind_address: String,
+}
+
+impl actix::Handler<Stopped> for Servers {
+    type Result = ();
+
+    fn handle(&mut self, msg: Stopped, _ctx: &mut Self::Context) -> Self::Result {
+        tracing::trace!("Handler<Stopped> for Servers {:?}", msg.bind_address);
+
+        let next = self
+            .handlers
+            .clone()
+            .into_iter()
+            .filter(|h| h.bind_address != msg.bind_address)
+            .collect();
+        self.handlers = next;
+    }
+}
+
+#[derive(actix::Message)]
+#[rtype(result = "()")]
 pub struct StopMsg;
 
 impl actix::Handler<StopMsg> for Servers {
@@ -80,36 +103,113 @@ impl actix::Handler<FsWatchEvent> for Servers {
     type Result = ();
 
     /// todo: accept more messages here
-    fn handle(&mut self, msg: FsWatchEvent, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: FsWatchEvent, ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!("FsWatchEvent for Servers");
         tracing::trace!("  └ {:?}", msg.absolute_path);
-        let is_input = true;
-        if is_input {
-            // todo(Shane): implement removal of routes
-            let input = Input::from_yaml_path(&msg.absolute_path);
-            if let Ok(input) = input {
-                tracing::trace!("  └ read input {:?}", input);
 
-                for server_config in input.servers {
-                    if let Some(matching_child) = self
-                        .handlers
-                        .iter()
-                        .find(|h| h.bind_address == server_config.bind_address)
-                    {
-                        tracing::trace!(
-                            "  └ found matching for bind_address {}",
-                            server_config.bind_address
-                        );
-                        matching_child
-                            .actor_address
-                            .do_send(PatchOne { server_config });
-                    }
-                }
-            } else if let Err(e) = input {
-                tracing::error!("{:?}", e);
+        let self_addr = ctx.address();
+        let input = Input::from_yaml_path(&msg.absolute_path);
+        tracing::trace!("  └ read input {:?}", input);
+
+        if let Ok(input) = input {
+            let existing: Vec<_> = self
+                .handlers
+                .iter()
+                .map(|s| s.bind_address.as_str())
+                .collect();
+
+            let new_addresses: Vec<_> = input
+                .servers
+                .iter()
+                .map(|s| s.bind_address.as_str())
+                .collect();
+
+            let new_configs: Vec<_> = input
+                .servers
+                .iter()
+                .filter(|s| !existing.contains(&s.bind_address.as_str()))
+                .collect();
+
+            let evictions: Vec<_> = self
+                .handlers
+                .iter()
+                .filter(|s| !new_addresses.contains(&s.bind_address.as_str()))
+                .map(|h| h.actor_address.clone())
+                .collect();
+
+            let duplicates: Vec<_> = input
+                .servers
+                .iter()
+                .filter(|s| existing.contains(&s.bind_address.as_str()))
+                .collect();
+
+            tracing::debug!("exising: {:?}", existing);
+            tracing::debug!("new_addresses: {:?}", new_addresses);
+            tracing::debug!("evicted: {}", evictions.len());
+            tracing::debug!("next: {}", new_configs.len());
+            tracing::debug!("duplicates: {}", duplicates.len());
+
+            for handler in evictions {
+                tracing::trace!("sending Stop2");
+                handler.do_send(Stop2);
             }
-        } else {
-            tracing::debug!("  └ discarding change event for {:?}", msg.absolute_path);
+            // let evictions = async move {
+            // };
+            //
+            // Arbiter::current().spawn(evictions);
+
+            // servers to start
+
+            // servers to update
+
+            // servers to remove
+
+            // let addresses: Vec<_> = input
+            //     .servers
+            //     .iter()
+            //     .map(|s| s.bind_address.as_str())
+            //     .collect();
+            //
+            // let removed: Vec<_> = self
+            //     .handlers
+            //     .iter()
+            //     .filter(|handler| !addresses.contains(&handler.bind_address.as_str()))
+            //     .collect();
+            //
+            // for removed_server in removed {
+            //     tracing::trace!("  ❌ stopping bind_address {}", removed_server.bind_address);
+            //     // removed_server.actor_address.do_send(Stop2);
+            //     let add = removed_server.actor_address.clone();
+            //     Arbiter::current().spawn(async move {
+            //         add.send(Stop2).await;
+            //     });
+            // }
+            //
+            // for server_config in input.servers {
+            //     if let Some(matching_child) = self
+            //         .handlers
+            //         .iter()
+            //         .find(|h| h.bind_address == server_config.bind_address)
+            //     {
+            //         tracing::trace!(
+            //             "  └ found matching for bind_address {}",
+            //             server_config.bind_address
+            //         );
+            //         matching_child
+            //             .actor_address
+            //             .do_send(PatchOne { server_config });
+            //     } else {
+            //         tracing::debug!("missing {:?}", server_config);
+            //         addr.do_send(StartMessage {
+            //             server_configs: vec![server_config.clone()],
+            //         });
+            //         addr.do_send(Patch {
+            //             server_configs: vec![server_config],
+            //         });
+            //     }
+            // }
+        } else if let Err(e) = input {
+            tracing::error!("{:?}", e);
         }
     }
 }
