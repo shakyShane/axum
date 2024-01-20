@@ -8,12 +8,9 @@ use axum::middleware::{from_fn_with_state, Next};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{any, MethodRouter};
 use axum::{http, Json, Router};
-use std::convert::Infallible;
 use std::sync::Arc;
-
-use tower::{service_fn, Layer, ServiceBuilder, ServiceExt};
+use tower::{ServiceBuilder, ServiceExt};
 use tower_http::catch_panic::CatchPanicLayer;
-use tower_http::BoxError;
 
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
@@ -27,9 +24,8 @@ pub fn make_router(state: &Arc<AppState>) -> Router {
 }
 
 pub fn built_ins(state: Arc<AppState>) -> Router {
-    async fn handler(State(app): State<Arc<AppState>>, uri: Uri) -> impl IntoResponse {
+    async fn handler(State(_app): State<Arc<AppState>>, uri: Uri) -> impl IntoResponse {
         // let v = app.lock().await;
-        let routes = app.routes.lock().await;
         format!("route-- {:?}", uri.path()).into_response()
     }
 
@@ -80,14 +76,14 @@ async fn serve_dir_loader(
     tracing::trace!("  -> serve_dir_loader {}", req.uri().path());
     tracing::trace!("  -> serve_dir_loader {:?}", query);
 
-    let bindings = app.dir_bindings.lock().await;
+    let routes = app.routes.lock().await;
     let mut app = Router::new();
 
-    for (path, v) in bindings.iter() {
-        if let RouteKind::Dir(DirRoute { dir }) = &v.kind {
-            let mut r1 = Router::new().nest_service(path, ServeDir::new(dir));
+    for route in routes.iter() {
+        if let RouteKind::Dir(DirRoute { dir }) = &route.kind {
+            let mut r1 = Router::new().nest_service(route.path.as_str(), ServeDir::new(dir));
 
-            if v.opts.as_ref().is_some_and(|v| v.cors) {
+            if route.opts.as_ref().is_some_and(|v| v.cors) {
                 r1 = r1.layer(CorsLayer::new().allow_origin(Any).allow_methods(Any));
             }
 
@@ -133,11 +129,38 @@ async fn raw_loader(
     tracing::trace!("-> raw_loader");
 
     {
-        let v = app.routes.lock().await;
-        let matched = v.at(req.uri().path());
+        let routes = app.routes.lock().await;
+        let mut temp_router = matchit::Router::new();
+
+        // which route kinds can be hard-matched first
+        for route in routes.iter() {
+            let path = route.path();
+            match &route.kind {
+                RouteKind::Html { .. } | RouteKind::Json { .. } | RouteKind::Raw { .. } => {
+                    let existing = temp_router.at_mut(path);
+                    if let Ok(prev) = existing {
+                        *prev.value = route.clone();
+                        tracing::trace!(" └ updated mutable route at {}", path)
+                    } else if let Err(err) = existing {
+                        println!("{:?} {:?}", path, route.clone());
+                        match temp_router.insert(path, route.clone()) {
+                            Ok(_) => {
+                                tracing::trace!("  └ inserted {} with {:?}", path, route)
+                            }
+                            Err(_) => {
+                                tracing::error!("  └ could not insert {:?}", err.to_string())
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let matched = temp_router.at(req.uri().path());
 
         let Ok(matched) = matched else {
-            drop(v);
+            drop(routes);
             let r = next.run(req).await;
             tracing::trace!("<- raw_loader.next");
             return r;
@@ -175,17 +198,6 @@ async fn raw_loader(
 
     let response = next.run(req).await;
     tracing::trace!("<- raw_loader.next");
-    response
-}
-
-async fn raw_loader_2(
-    State(_app): State<Arc<AppState>>,
-    req: Request,
-    next: Next,
-) -> impl IntoResponse {
-    tracing::trace!(" -> raw_loader 2");
-    let response = next.run(req).await;
-    tracing::trace!(" <- raw_loader 2.next");
     response
 }
 

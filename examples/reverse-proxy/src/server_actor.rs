@@ -1,5 +1,5 @@
-use crate::server_config::{DirRoute, Route, RouteKind, ServerConfig};
-use crate::server_handlers::{make_router};
+use crate::server_config::{Route, ServerConfig};
+use crate::server_handlers::make_router;
 use crate::server_signals::ServerSignals;
 use crate::server_updates::PatchOne;
 use actix::{ActorContext, Running};
@@ -8,13 +8,12 @@ use anyhow::anyhow;
 use axum::response::{IntoResponse, Response};
 
 use hyper::header::CONTENT_TYPE;
-use std::collections::HashMap;
+
 use std::fmt::Formatter;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender, Mutex};
-
 
 pub struct ServerActor {
     pub config: ServerConfig,
@@ -45,8 +44,7 @@ impl ServerActor {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub routes: Arc<Mutex<matchit::Router<Route>>>,
-    pub dir_bindings: Arc<Mutex<HashMap<String, Route>>>,
+    pub routes: Arc<Mutex<Vec<Route>>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -65,12 +63,8 @@ impl actix::Actor for ServerActor {
         let addr = self.config.bind_address.clone();
         let (send_complete, received_stop) = self.install_signals();
 
-        let router = matchit::Router::new();
-        let dir_bindings = HashMap::new();
-
         let app_state = Arc::new(AppState {
-            routes: Arc::new(Mutex::new(router)),
-            dir_bindings: Arc::new(Mutex::new(dir_bindings)),
+            routes: Arc::new(Mutex::new(vec![])),
         });
 
         self.app_state = Some(app_state.clone());
@@ -157,37 +151,11 @@ impl actix::Handler<PatchOne> for ServerActor {
             .app_state
             .as_ref()
             .ok_or(anyhow!("could not access state"))?;
-        let s_c = app_state.clone();
+        let app_state_clone = app_state.clone();
         let routes = msg.server_config.routes.clone();
         let update_dn = async move {
-            let mut router = s_c.routes.lock().await;
-            for route in routes {
-                let path = route.path();
-                match &route.kind {
-                    RouteKind::Html { .. } | RouteKind::Json { .. } | RouteKind::Raw { .. } => {
-                        let existing = router.at_mut(path);
-                        if let Ok(prev) = existing {
-                            *prev.value = route.clone();
-                            tracing::trace!(" └ updated mutable route at {}", path)
-                        } else if let Err(err) = existing {
-                            match router.insert(path, route.clone()) {
-                                Ok(_) => {
-                                    tracing::trace!("  └ inserted {} with {:?}", path, route)
-                                }
-                                Err(_) => {
-                                    tracing::error!("  └ could not insert {:?}", err.to_string())
-                                }
-                            }
-                        }
-                    }
-                    RouteKind::Dir(DirRoute { dir }) => {
-                        let mut dir_bindings = s_c.dir_bindings.lock().await;
-                        dir_bindings.insert(path.to_owned(), route.clone());
-                        tracing::trace!(" └ updated dir_bindings at {} with {}", path, dir.clone());
-                        drop(dir_bindings);
-                    }
-                }
-            }
+            let mut mut_routes = app_state_clone.routes.lock().await;
+            *mut_routes = routes;
         };
 
         Arbiter::current().spawn(update_dn);

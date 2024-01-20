@@ -13,7 +13,7 @@ servers:
                   <link rel="stylesheet" href="/fixtures/styles-2.css">
               </head>
               <body>
-              <p class="alert">Beware of the zombies</p> 
+              <p class="alert">Beware of the zombies plz</p> 
               <script defer>
                   fetch("http://localhost:3002/2.json")
                       .then(x => x.json())
