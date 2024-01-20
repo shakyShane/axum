@@ -1,19 +1,20 @@
 use crate::server_config::{DirRoute, Route, RouteKind, ServerConfig};
-use crate::server_handlers::{built_ins, dynamic_loaders};
+use crate::server_handlers::{make_router};
 use crate::server_signals::ServerSignals;
 use crate::server_updates::PatchOne;
 use actix::{ActorContext, Running};
 use actix_rt::Arbiter;
 use anyhow::anyhow;
 use axum::response::{IntoResponse, Response};
-use axum::Router;
+
 use hyper::header::CONTENT_TYPE;
 use std::collections::HashMap;
+use std::fmt::Formatter;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender, Mutex};
-use tower_http::trace::TraceLayer;
+
 
 pub struct ServerActor {
     pub config: ServerConfig,
@@ -48,6 +49,15 @@ pub struct AppState {
     pub dir_bindings: Arc<Mutex<HashMap<String, Route>>>,
 }
 
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("routes", &"Arc<Mutex<matchit::Router<Route>>>")
+            .field("dir_bindings", &"Arc<Mutex<HashMap<String, Route>>")
+            .finish()
+    }
+}
+
 impl actix::Actor for ServerActor {
     type Context = actix::Context<Self>;
 
@@ -66,14 +76,11 @@ impl actix::Actor for ServerActor {
         self.app_state = Some(app_state.clone());
 
         let server = async move {
-            let router = Router::new()
-                .merge(built_ins(app_state.clone()))
-                .merge(dynamic_loaders(app_state.clone()));
-
+            let router = make_router(&app_state);
             let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
             tracing::debug!("axum: listening on {}", listener.local_addr().unwrap());
 
-            match axum::serve(listener, router.layer(TraceLayer::new_for_http()))
+            match axum::serve(listener, router)
                 .with_graceful_shutdown(async { received_stop.await.unwrap() })
                 .await
             {
