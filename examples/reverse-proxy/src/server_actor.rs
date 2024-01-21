@@ -65,7 +65,7 @@ impl actix::Actor for ServerActor {
     type Context = actix::Context<Self>;
 
     fn started(&mut self, _ctx: &mut Self::Context) {
-        let addr = self.config.bind_address.clone();
+        let bind_address = self.config.bind_address.clone();
         let (send_complete, received_stop, handle) = self.install_signals();
 
         let app_state = Arc::new(AppState {
@@ -76,10 +76,10 @@ impl actix::Actor for ServerActor {
 
         let server = async move {
             let router = make_router(&app_state);
-            let addr: Result<SocketAddr, _> = addr.parse();
+            let socket_addr: Result<SocketAddr, _> = bind_address.parse();
 
-            let Ok(addr) = addr else {
-                tracing::error!("axum: could not parse bind_address");
+            let Ok(addr) = socket_addr else {
+                tracing::error!("{} [started] could not parse bind_address", bind_address);
                 return;
             };
 
@@ -89,13 +89,16 @@ impl actix::Actor for ServerActor {
 
             match server.await {
                 Ok(_) => {
-                    tracing::debug!("axum: Server all done");
+                    tracing::debug!("{} [started] Server all done", bind_address);
                     if send_complete.send(()).is_err() {
-                        tracing::error!("axum: could not send complete message");
+                        tracing::error!(
+                            "{} [started] could not send complete message",
+                            bind_address
+                        );
                     }
                 }
                 Err(_) => {
-                    tracing::error!("axum: Server all done, but error");
+                    tracing::error!("{} [started] Server all done, but error", bind_address);
                 }
             }
         };
@@ -103,12 +106,12 @@ impl actix::Actor for ServerActor {
     }
 
     fn stopping(&mut self, _ctx: &mut Self::Context) -> Running {
-        tracing::debug!("Server stopping (), {}", &self.config.bind_address);
+        tracing::debug!("{} [lifecycle] Server stopping", &self.config.bind_address);
         Running::Stop
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
-        tracing::debug!("Server stopped (), {}", &self.config.bind_address);
+        tracing::debug!("{} [lifecycle] Server stopped", &self.config.bind_address);
     }
 }
 
@@ -128,18 +131,20 @@ impl actix::Handler<Stop2> for ServerActor {
     type Result = Pin<Box<dyn Future<Output = String>>>;
 
     fn handle(&mut self, _msg: Stop2, ctx: &mut Self::Context) -> Self::Result {
-        tracing::trace!("actor(Server): Stop2");
+        tracing::trace!("{} [Stop2]", self.config.bind_address);
+
         ctx.stop();
+
         // don't accept any more messages
         let Some(signals) = self.signals.take() else {
             todo!("should be unreachable. close signal can only be sent once")
         };
         if let Some(handle) = signals.handle {
-            tracing::trace!("actor(Server): shutting down...");
+            tracing::trace!("{} using handle to shutdown", self.config.bind_address);
             handle.shutdown();
         }
         if let Some(complete_msg_receiver) = signals.complete_mdg_receiver {
-            tracing::debug!("actor(Server): confirmed closed!");
+            tracing::debug!("{} confirmed closed via signal", self.config.bind_address);
             let bind_address = self.config.bind_address.clone();
             Box::pin(async move {
                 complete_msg_receiver.await.unwrap();

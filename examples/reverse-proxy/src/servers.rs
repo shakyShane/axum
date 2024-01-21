@@ -134,7 +134,6 @@ impl actix::Handler<FsWatchEvent> for Servers {
                 .handlers
                 .iter()
                 .filter(|s| !new_addresses.contains(&s.bind_address.as_str()))
-                .map(|h| h.actor_address.clone())
                 .collect();
 
             let duplicates: Vec<_> = input
@@ -150,8 +149,8 @@ impl actix::Handler<FsWatchEvent> for Servers {
             tracing::debug!("duplicates: {}", duplicates.len());
 
             for handler in evictions {
-                tracing::trace!("sending Stop2");
-                handler.do_send(Stop2);
+                tracing::trace!("sending Stop2 to {}", handler.bind_address);
+                handler.actor_address.do_send(Stop2);
             }
             // let evictions = async move {
             // };
