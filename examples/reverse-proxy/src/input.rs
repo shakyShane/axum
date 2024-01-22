@@ -11,6 +11,7 @@ impl Input {
     pub fn from_yaml_path<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
         let str = read_to_string(path)?;
         let output = serde_yaml::from_str::<Self>(str.as_str())?;
+        // todo: don't allow duplicates.
         Ok(output)
     }
 }

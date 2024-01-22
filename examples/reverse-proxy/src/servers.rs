@@ -167,6 +167,10 @@ impl actix::Handler<FsWatchEvent> for Servers {
                 )
                 .collect();
 
+            tracing::debug!("{} shutdown jobs", shutdown_addrs.len());
+            tracing::debug!("{} startup jobs", startup_jobs.len());
+            tracing::debug!("{} patch jobs", patch_jobs.len());
+
             let async_jobs = async move {
                 for addr in shutdown_addrs {
                     match addr.send(Stop2).await {

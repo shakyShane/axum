@@ -3,3 +3,7 @@ servers:
     routes:
       - path: /
         raw: "oops 2"
+  - bind_address: 127.0.0.1:3001
+    routes:
+      - path: /
+        raw: "oops 2"
