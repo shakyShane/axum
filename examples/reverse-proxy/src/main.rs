@@ -11,7 +11,7 @@ mod servers;
 use crate::fs_watcher::FsWatcher;
 use crate::input::Input;
 
-use crate::server_updates::Patch;
+
 use crate::servers::{Servers, StartMessage};
 
 use actix::prelude::*;
@@ -115,10 +115,6 @@ fn main() {
                 server_configs: input.servers.clone(),
             })
             .await;
-
-        servers_addr.do_send(Patch {
-            server_configs: input.servers.clone(),
-        });
 
         sleep(Duration::from_secs(10000)).await;
 

@@ -1,11 +1,12 @@
 use crate::fs_watcher::FsWatchEvent;
 use crate::input::Input;
-use crate::server_actor::Stop2;
+use crate::server_actor::{ServerActor, Stop2};
 use crate::server_config::ServerConfig;
 use crate::server_updates::{Patch, PatchOne};
 use crate::{server_actor, ServerHandler};
-use actix::{Actor, AsyncContext, MailboxError};
+use actix::{Actor, Addr, AsyncContext};
 use futures::future::join_all;
+use std::collections::{HashMap, HashSet};
 
 use actix_rt::Arbiter;
 use std::future::Future;
@@ -74,7 +75,13 @@ impl actix::Handler<Stopped> for Servers {
             .into_iter()
             .filter(|h| h.bind_address != msg.bind_address)
             .collect();
+
         self.handlers = next;
+
+        tracing::trace!(
+            "Handler<Stopped> remaining handlers: {}",
+            self.handlers.len()
+        )
     }
 }
 
@@ -112,101 +119,78 @@ impl actix::Handler<FsWatchEvent> for Servers {
         tracing::trace!("  └ read input {:?}", input);
 
         if let Ok(input) = input {
-            let existing: Vec<_> = self
+            let curr: HashSet<_> = self
                 .handlers
                 .iter()
                 .map(|s| s.bind_address.as_str())
                 .collect();
 
-            let new_addresses: Vec<_> = input
+            let actor_addresses: HashMap<String, Addr<ServerActor>> = self
+                .handlers
+                .iter()
+                .map(|h| (h.bind_address.to_owned(), h.actor_address.clone()))
+                .collect();
+
+            let lookup_next: HashMap<String, ServerConfig> = input
+                .servers
+                .iter()
+                .map(|h| (h.bind_address.to_owned(), h.clone()))
+                .collect();
+
+            let next: HashSet<_> = input
                 .servers
                 .iter()
                 .map(|s| s.bind_address.as_str())
                 .collect();
 
-            let new_configs: Vec<_> = input
-                .servers
-                .iter()
-                .filter(|s| !existing.contains(&s.bind_address.as_str()))
+            let shutdown: Vec<String> = curr.difference(&next).map(|s| String::from(*s)).collect();
+            let startup: Vec<String> = next.difference(&curr).map(|s| String::from(*s)).collect();
+            let patch: Vec<String> = curr.intersection(&next).map(|s| String::from(*s)).collect();
+
+            let shutdown_addrs: Vec<_> = shutdown
+                .into_iter()
+                .filter_map(|bind| actor_addresses.get(&bind).map(|c| c.to_owned()))
                 .collect();
 
-            let evictions: Vec<_> = self
-                .handlers
-                .iter()
-                .filter(|s| !new_addresses.contains(&s.bind_address.as_str()))
+            let startup_jobs: Vec<_> = startup
+                .into_iter()
+                .filter_map(|bind| lookup_next.get(&bind).map(|c| c.to_owned()))
                 .collect();
 
-            let duplicates: Vec<_> = input
-                .servers
-                .iter()
-                .filter(|s| existing.contains(&s.bind_address.as_str()))
+            let patch_jobs: Vec<_> = patch
+                .into_iter()
+                .map(
+                    |bind_a| match (lookup_next.get(&bind_a), actor_addresses.get(&bind_a)) {
+                        (Some(config), Some(handle)) => (config.to_owned(), handle.to_owned()),
+                        _ => unreachable!("if we get here it's a bug"),
+                    },
+                )
                 .collect();
 
-            tracing::debug!("exising: {:?}", existing);
-            tracing::debug!("new_addresses: {:?}", new_addresses);
-            tracing::debug!("evicted: {}", evictions.len());
-            tracing::debug!("next: {}", new_configs.len());
-            tracing::debug!("duplicates: {}", duplicates.len());
+            let async_jobs = async move {
+                for addr in shutdown_addrs {
+                    match addr.send(Stop2).await {
+                        Ok(bind_address) => self_addr.do_send(Stopped { bind_address }),
+                        Err(e) => {
+                            tracing::error!("{}", e);
+                        }
+                    }
+                }
 
-            for handler in evictions {
-                tracing::trace!("sending Stop2 to {}", handler.bind_address);
-                handler.actor_address.do_send(Stop2);
-            }
-            // let evictions = async move {
-            // };
-            //
-            // Arbiter::current().spawn(evictions);
+                if !startup_jobs.is_empty() {
+                    self_addr.do_send(StartMessage {
+                        server_configs: startup_jobs,
+                    });
+                }
 
-            // servers to start
+                for (config, addr) in patch_jobs {
+                    addr.do_send(PatchOne {
+                        server_config: config,
+                    });
+                }
+            };
 
-            // servers to update
-
-            // servers to remove
-
-            // let addresses: Vec<_> = input
-            //     .servers
-            //     .iter()
-            //     .map(|s| s.bind_address.as_str())
-            //     .collect();
-            //
-            // let removed: Vec<_> = self
-            //     .handlers
-            //     .iter()
-            //     .filter(|handler| !addresses.contains(&handler.bind_address.as_str()))
-            //     .collect();
-            //
-            // for removed_server in removed {
-            //     tracing::trace!("  ❌ stopping bind_address {}", removed_server.bind_address);
-            //     // removed_server.actor_address.do_send(Stop2);
-            //     let add = removed_server.actor_address.clone();
-            //     Arbiter::current().spawn(async move {
-            //         add.send(Stop2).await;
-            //     });
-            // }
-            //
-            // for server_config in input.servers {
-            //     if let Some(matching_child) = self
-            //         .handlers
-            //         .iter()
-            //         .find(|h| h.bind_address == server_config.bind_address)
-            //     {
-            //         tracing::trace!(
-            //             "  └ found matching for bind_address {}",
-            //             server_config.bind_address
-            //         );
-            //         matching_child
-            //             .actor_address
-            //             .do_send(PatchOne { server_config });
-            //     } else {
-            //         tracing::debug!("missing {:?}", server_config);
-            //         addr.do_send(StartMessage {
-            //             server_configs: vec![server_config.clone()],
-            //         });
-            //         addr.do_send(Patch {
-            //             server_configs: vec![server_config],
-            //         });
-            //     }
-            // }
+            Arbiter::current().spawn(async_jobs);
         } else if let Err(e) = input {
             tracing::error!("{:?}", e);
         }

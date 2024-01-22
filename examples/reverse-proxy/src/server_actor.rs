@@ -15,7 +15,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::{oneshot, oneshot::Receiver, oneshot::Sender, Mutex};
+use tokio::sync::{oneshot, oneshot::Sender, Mutex};
 
 pub struct ServerActor {
     pub config: ServerConfig,
@@ -31,19 +31,17 @@ impl ServerActor {
             app_state: None,
         }
     }
-    pub fn install_signals(&mut self) -> (Sender<()>, Receiver<()>, Handle) {
-        let (stop_server_sender, stop_server_receiver) = oneshot::channel();
+    pub fn install_signals(&mut self) -> (Sender<()>, Handle) {
         let (shutdown_complete, shutdown_complete_receiver) = oneshot::channel();
         let handle = Handle::new();
         let h2 = handle.clone();
 
         self.signals = Some(ServerSignals {
-            stop_msg_sender: Some(stop_server_sender),
             complete_mdg_receiver: Some(shutdown_complete_receiver),
             handle: Some(handle),
         });
 
-        (shutdown_complete, stop_server_receiver, h2)
+        (shutdown_complete, h2)
     }
 }
 
@@ -66,10 +64,11 @@ impl actix::Actor for ServerActor {
 
     fn started(&mut self, _ctx: &mut Self::Context) {
         let bind_address = self.config.bind_address.clone();
-        let (send_complete, received_stop, handle) = self.install_signals();
+        tracing::debug!("actor started for {}", bind_address);
+        let (send_complete, handle) = self.install_signals();
 
         let app_state = Arc::new(AppState {
-            routes: Arc::new(Mutex::new(vec![])),
+            routes: Arc::new(Mutex::new(self.config.routes.clone())),
         });
 
         self.app_state = Some(app_state.clone());
@@ -82,6 +81,8 @@ impl actix::Actor for ServerActor {
                 tracing::error!("{} [started] could not parse bind_address", bind_address);
                 return;
             };
+
+            tracing::debug!("listing on {:?}", addr);
 
             let server = axum_server::bind(addr)
                 .handle(handle)
