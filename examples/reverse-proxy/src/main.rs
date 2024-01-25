@@ -11,7 +11,6 @@ mod servers;
 use crate::fs_watcher::FsWatcher;
 use crate::input::Input;
 
-
 use crate::servers::{Servers, StartMessage};
 
 use actix::prelude::*;
@@ -30,6 +29,7 @@ use http_body_util::BodyExt;
 use hyper::StatusCode;
 use hyper_util::client::legacy::connect::HttpConnector;
 use std::env::current_dir;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -69,6 +69,7 @@ struct Ping(usize);
 struct ServerHandler {
     actor_address: actix::Addr<server_actor::ServerActor>,
     bind_address: String,
+    addr: SocketAddr,
 }
 fn main() {
     let fmt_layer = tracing_subscriber::fmt::layer().without_time();

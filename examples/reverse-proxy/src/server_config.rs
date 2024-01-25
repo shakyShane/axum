@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct ServerConfig {
-    pub bind_address: String,
+    pub bind_address: Option<String>,
     #[serde(default)]
     pub routes: Vec<Route>,
 }
