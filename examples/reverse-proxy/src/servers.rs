@@ -60,8 +60,8 @@ impl actix::Handler<StartMessage> for Servers {
             for (fut_result, server_config) in results {
                 match fut_result {
                     Ok(msg_response) => match msg_response {
-                        Ok((Some(addr), actor_addr)) => {
-                            tracing::debug!("got addr: {}", addr.to_string());
+                        Ok((addr, actor_addr)) => {
+                            tracing::debug!("✚ got listening child: {}", addr.to_string());
                             self_addr.do_send(Binding {
                                 server_handler: ServerHandler {
                                     actor_address: actor_addr,
@@ -70,13 +70,10 @@ impl actix::Handler<StartMessage> for Servers {
                                 },
                             });
                         }
-                        Ok((None, _)) => {
-                            tracing::error!("got no addr")
-                        }
-                        Err(e) => tracing::error!("{}", e),
+                        Err(e) => tracing::error!("  <- {}", e),
                         _ => tracing::error!("unreachable"),
                     },
-                    Err(e) => tracing::error!("{}", e),
+                    Err(e) => tracing::error!("  <- [m] {}", e),
                 }
             }
         };
@@ -96,7 +93,7 @@ impl actix::Handler<Binding> for Servers {
 
     fn handle(&mut self, msg: Binding, ctx: &mut Self::Context) -> Self::Result {
         self.handlers.push(msg.server_handler);
-        tracing::trace!("handler count: {}", self.handlers.len());
+        tracing::trace!("child count: {}", self.handlers.len());
     }
 }
 
@@ -157,93 +154,93 @@ impl actix::Handler<FsWatchEvent> for Servers {
         tracing::trace!("FsWatchEvent for Servers");
         tracing::trace!("  └ {:?}", msg.absolute_path);
 
-        let self_addr = ctx.address();
-        let input = Input::from_yaml_path(&msg.absolute_path);
-        tracing::trace!("  └ read input {:?}", input);
-
-        if let Ok(input) = input {
-            let curr: HashSet<_> = self
-                .handlers
-                .iter()
-                .map(|s| s.bind_address.as_str())
-                .collect();
-
-            let actor_addresses: HashMap<String, Addr<ServerActor>> = self
-                .handlers
-                .iter()
-                .map(|h| (h.bind_address.to_owned(), h.actor_address.clone()))
-                .collect();
-
-            let lookup_next: HashMap<String, ServerConfig> = input
-                .servers
-                .iter()
-                .filter_map(|h| {
-                    h.bind_address
-                        .as_ref()
-                        .map(|addres| (addres.to_owned(), h.to_owned()))
-                })
-                .collect();
-
-            let next: HashSet<_> = input
-                .servers
-                .iter()
-                .filter_map(|s| s.bind_address.as_ref().map(|s| s.as_str()))
-                .collect();
-
-            let shutdown: Vec<String> = curr.difference(&next).map(|s| String::from(*s)).collect();
-            let startup: Vec<String> = next.difference(&curr).map(|s| String::from(*s)).collect();
-            let patch: Vec<String> = curr.intersection(&next).map(|s| String::from(*s)).collect();
-
-            let shutdown_addrs: Vec<_> = shutdown
-                .into_iter()
-                .filter_map(|bind| actor_addresses.get(&bind).map(|c| c.to_owned()))
-                .collect();
-
-            let startup_jobs: Vec<_> = startup
-                .into_iter()
-                .filter_map(|bind| lookup_next.get(&bind).map(|c| c.to_owned()))
-                .collect();
-
-            let patch_jobs: Vec<_> = patch
-                .into_iter()
-                .map(
-                    |bind_a| match (lookup_next.get(&bind_a), actor_addresses.get(&bind_a)) {
-                        (Some(config), Some(handle)) => (config.to_owned(), handle.to_owned()),
-                        _ => unreachable!("if we get here it's a bug"),
-                    },
-                )
-                .collect();
-
-            tracing::debug!("{} shutdown jobs", shutdown_addrs.len());
-            tracing::debug!("{} startup jobs", startup_jobs.len());
-            tracing::debug!("{} patch jobs", patch_jobs.len());
-
-            let async_jobs = async move {
-                for addr in shutdown_addrs {
-                    match addr.send(Stop2).await {
-                        Ok(addr) => self_addr.do_send(Stopped { addr }),
-                        Err(e) => {
-                            tracing::error!("{}", e);
-                        }
-                    }
-                }
-
-                if !startup_jobs.is_empty() {
-                    self_addr.do_send(StartMessage {
-                        server_configs: startup_jobs,
-                    });
-                }
-
-                for (config, addr) in patch_jobs {
-                    addr.do_send(PatchOne {
-                        server_config: config,
-                    });
-                }
-            };
-
-            Arbiter::current().spawn(async_jobs);
-        } else if let Err(e) = input {
-            tracing::error!("{:?}", e);
-        }
+        // let self_addr = ctx.address();
+        // let input = Input::from_yaml_path(&msg.absolute_path);
+        // tracing::trace!("  └ read input {:?}", input);
+        //
+        // if let Ok(input) = input {
+        //     let curr: HashSet<_> = self
+        //         .handlers
+        //         .iter()
+        //         .map(|s| s.bind_address.as_str())
+        //         .collect();
+        //
+        //     let actor_addresses: HashMap<String, Addr<ServerActor>> = self
+        //         .handlers
+        //         .iter()
+        //         .map(|h| (h.bind_address.to_owned(), h.actor_address.clone()))
+        //         .collect();
+        //
+        //     let lookup_next: HashMap<String, ServerConfig> = input
+        //         .servers
+        //         .iter()
+        //         .filter_map(|h| {
+        //             h.bind_address
+        //                 .as_ref()
+        //                 .map(|addres| (addres.to_owned(), h.to_owned()))
+        //         })
+        //         .collect();
+        //
+        //     let next: HashSet<_> = input
+        //         .servers
+        //         .iter()
+        //         .filter_map(|s| s.bind_address.as_ref().map(|s| s.as_str()))
+        //         .collect();
+        //
+        //     let shutdown: Vec<String> = curr.difference(&next).map(|s| String::from(*s)).collect();
+        //     let startup: Vec<String> = next.difference(&curr).map(|s| String::from(*s)).collect();
+        //     let patch: Vec<String> = curr.intersection(&next).map(|s| String::from(*s)).collect();
+        //
+        //     let shutdown_addrs: Vec<_> = shutdown
+        //         .into_iter()
+        //         .filter_map(|bind| actor_addresses.get(&bind).map(|c| c.to_owned()))
+        //         .collect();
+        //
+        //     let startup_jobs: Vec<_> = startup
+        //         .into_iter()
+        //         .filter_map(|bind| lookup_next.get(&bind).map(|c| c.to_owned()))
+        //         .collect();
+        //
+        //     let patch_jobs: Vec<_> = patch
+        //         .into_iter()
+        //         .map(
+        //             |bind_a| match (lookup_next.get(&bind_a), actor_addresses.get(&bind_a)) {
+        //                 (Some(config), Some(handle)) => (config.to_owned(), handle.to_owned()),
+        //                 _ => unreachable!("if we get here it's a bug"),
+        //             },
+        //         )
+        //         .collect();
+        //
+        //     tracing::debug!("{} shutdown jobs", shutdown_addrs.len());
+        //     tracing::debug!("{} startup jobs", startup_jobs.len());
+        //     tracing::debug!("{} patch jobs", patch_jobs.len());
+        //
+        //     let async_jobs = async move {
+        //         for addr in shutdown_addrs {
+        //             match addr.send(Stop2).await {
+        //                 Ok(addr) => self_addr.do_send(Stopped { addr }),
+        //                 Err(e) => {
+        //                     tracing::error!("{}", e);
+        //                 }
+        //             }
+        //         }
+        //
+        //         if !startup_jobs.is_empty() {
+        //             self_addr.do_send(StartMessage {
+        //                 server_configs: startup_jobs,
+        //             });
+        //         }
+        //
+        //         for (config, addr) in patch_jobs {
+        //             addr.do_send(PatchOne {
+        //                 server_config: config,
+        //             });
+        //         }
+        //     };
+        //
+        //     Arbiter::current().spawn(async_jobs);
+        // } else if let Err(e) = input {
+        //     tracing::error!("{:?}", e);
+        // }
     }
 }

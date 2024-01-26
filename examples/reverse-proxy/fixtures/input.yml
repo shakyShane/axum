@@ -1,5 +1,10 @@
 servers:
-  - routes:
+  - bind_address: 0.0.0.0:3003
+    routes:
+      - path: /
+        json: [1, 2]
+  - bind_address: 0.0.0.0:3002
+    routes:
       - path: /
         html: |
           <body>

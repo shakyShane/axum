@@ -12,6 +12,7 @@ use hyper::header::CONTENT_TYPE;
 use axum_server::Handle;
 use std::fmt::Formatter;
 use std::future::Future;
+use std::io::ErrorKind;
 use std::net::{SocketAddr, TcpListener};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -67,7 +68,7 @@ impl actix::Actor for ServerActor {
     fn started(&mut self, _ctx: &mut Self::Context) {}
 
     fn stopping(&mut self, _ctx: &mut Self::Context) -> Running {
-        tracing::debug!(
+        tracing::trace!(
             "{:?} [lifecycle] Server stopping",
             &self.config.bind_address
         );
@@ -75,7 +76,7 @@ impl actix::Actor for ServerActor {
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
-        tracing::debug!("{:?} [lifecycle] Server stopped", &self.config.bind_address);
+        tracing::trace!("{:?} [lifecycle] Server stopped", &self.config.bind_address);
     }
 }
 
@@ -88,22 +89,19 @@ fn text_asset_response(path: &str, css: &str) -> Response {
 }
 
 #[derive(actix::Message)]
-#[rtype(result = "Result<(Option<SocketAddr>, actix::Addr<ServerActor>), anyhow::Error>")]
+#[rtype(result = "Result<(SocketAddr, actix::Addr<ServerActor>), anyhow::Error>")]
 pub struct Listen;
 
 impl actix::Handler<Listen> for ServerActor {
     type Result = Pin<
-        Box<
-            dyn Future<
-                Output = Result<(Option<SocketAddr>, actix::Addr<ServerActor>), anyhow::Error>,
-            >,
-        >,
+        Box<dyn Future<Output = Result<(SocketAddr, actix::Addr<ServerActor>), anyhow::Error>>>,
     >;
 
     fn handle(&mut self, msg: Listen, ctx: &mut Self::Context) -> Self::Result {
         let bind_address = self.config.bind_address.clone();
-        tracing::debug!("actor started for {:?}", bind_address);
+        tracing::trace!("actor started for {:?}", bind_address);
         let (send_complete, handle) = self.install_signals();
+        let (oneshot_send, oneshot_rec) = tokio::sync::oneshot::channel();
         let h1 = handle.clone();
         let h2 = handle.clone();
 
@@ -127,14 +125,14 @@ impl actix::Handler<Listen> for ServerActor {
                 return;
             };
 
-            tracing::debug!("listening on {:?}", addr);
+            tracing::trace!("trying to listen on {:?}", addr);
             self_addr_2.do_send(Listening { addr });
 
             let server = axum_server::bind(addr)
                 .handle(h1)
                 .serve(router.into_make_service());
 
-            match server.await {
+            let result = match server.await {
                 Ok(_) => {
                     tracing::debug!("{:?} [started] Server all done", bind_address);
                     if send_complete.send(()).is_err() {
@@ -143,17 +141,46 @@ impl actix::Handler<Listen> for ServerActor {
                             bind_address
                         );
                     }
+                    Ok(())
                 }
-                Err(_) => {
-                    tracing::error!("{:?} [started] Server all done, but error", bind_address);
-                }
-            }
+                Err(e) => match e.kind() {
+                    ErrorKind::AddrInUse => {
+                        tracing::error!("{:?} [not-started] [AddrInUse] {}", bind_address, e);
+                        Err(e)
+                    }
+                    ErrorKind::AddrNotAvailable => {
+                        tracing::error!(
+                            "{:?} [not-started] [AddrNotAvailable] {}",
+                            bind_address,
+                            e
+                        );
+                        Err(e)
+                    }
+                    _ => {
+                        tracing::error!("{:?} [not-started] UNKNOWN {}", bind_address, e);
+                        Err(e)
+                    }
+                },
+            };
+            oneshot_send.send(result).unwrap();
         };
         Arbiter::current().spawn(server);
         let self_addr = self_addr.clone();
         Box::pin(async move {
-            let re = h2.listening().await;
-            Ok((re, self_addr))
+            let maybe_socket = h2.listening().await;
+            if maybe_socket.is_none() {
+                let output = oneshot_rec.await.unwrap();
+                // dbg!(output);
+                if let Err(e) = output {
+                    return Err(e.into());
+                }
+                return Err(anyhow!("could not determine the reason!"));
+            } else {
+                let Some(socker_address) = maybe_socket else {
+                    unreachable!();
+                };
+                Ok((socker_address, self_addr.clone()))
+            }
         })
     }
 }
